@@ -12,7 +12,7 @@
 //! # fn main() -> Result<(), osci::Error> {
 //! use osci::{OsciClient, Xta, Recipient};
 //!
-//! let client = OsciClient::builder()
+//! let mut client = OsciClient::builder()
 //!     .intermediary_url("https://intermediary.example/entry")
 //!     .intermediary_cipher_cert_pem(std::fs::read_to_string("intermediary.cer")?)
 //!     .signer_p12_file("client.p12", "123456")?
