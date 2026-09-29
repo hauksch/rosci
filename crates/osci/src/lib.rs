@@ -1,4 +1,4 @@
-//! `osci` — the curl of OSCI.
+//! `osci` — the library behind `rosci`, the curl of OSCI.
 //!
 //! A small, boring, well-lit API around the Governikus OSCI-Transport-1.2
 //! Java library (`de.osci:osci-bibliothek-lib`). The Java side runs as a

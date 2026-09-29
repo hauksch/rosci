@@ -122,7 +122,7 @@ fn find(haystack: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
         .map(|p| p + from)
 }
 
-/// Reads all of stdin — the `osci send -` code path.
+/// Reads all of stdin — the `rosci send -` code path.
 pub fn read_all_stdin() -> Result<Vec<u8>, Error> {
     let mut buf = Vec::new();
     std::io::stdin().read_to_end(&mut buf).map_err(Error::Io)?;

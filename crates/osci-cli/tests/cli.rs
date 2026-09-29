@@ -5,8 +5,8 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 
-fn osci() -> Command {
-    Command::cargo_bin("osci").unwrap()
+fn rosci() -> Command {
+    Command::cargo_bin("rosci").unwrap()
 }
 
 const HAPPY_BRIDGE: &str = r#"
@@ -55,7 +55,7 @@ fn env_with_fake_bridge() -> (String, tempfile::TempDir) {
 
 #[test]
 fn help_works() {
-    osci()
+    rosci()
         .arg("--help")
         .assert()
         .success()
@@ -64,7 +64,7 @@ fn help_works() {
 
 #[test]
 fn subcommand_help_lists_exit_codes() {
-    osci()
+    rosci()
         .arg("send")
         .arg("--help")
         .assert()
@@ -75,17 +75,17 @@ fn subcommand_help_lists_exit_codes() {
 #[test]
 fn version_prints_local_and_bridge() {
     let (bridge_cmd, _dir) = env_with_fake_bridge();
-    osci()
+    rosci()
         .arg("version")
         .env("OSCI_BRIDGE_CMD", &bridge_cmd)
         .assert()
         .success()
-        .stdout(predicate::str::contains("osci-cli").and(predicate::str::contains("fake-1.0")));
+        .stdout(predicate::str::contains("rosci").and(predicate::str::contains("fake-1.0")));
 }
 
 #[test]
 fn version_fails_when_required_and_missing() {
-    osci()
+    rosci()
         .arg("version")
         .arg("--require-bridge")
         .env("OSCI_BRIDGE_JAR", "/nonexistent/osci-bridge.jar")
@@ -97,7 +97,7 @@ fn version_fails_when_required_and_missing() {
 #[test]
 fn send_with_cert_recipient_prints_message_id() {
     let (bridge_cmd, dir) = env_with_fake_bridge();
-    osci()
+    rosci()
         .arg("send")
         .arg("meldung.xta")
         .args(["--to", "cert:recipient.cer"])
@@ -115,7 +115,7 @@ fn send_with_cert_recipient_prints_message_id() {
 #[test]
 fn send_json_output_is_parseable() {
     let (bridge_cmd, dir) = env_with_fake_bridge();
-    let out = osci()
+    let out = rosci()
         .arg("send")
         .arg("meldung.xta")
         .args(["--to", "cert:recipient.cer"])
@@ -139,7 +139,7 @@ fn send_json_output_is_parseable() {
 #[test]
 fn send_via_dvdv_resolution() {
     let (bridge_cmd, dir) = env_with_fake_bridge();
-    osci()
+    rosci()
         .arg("send")
         .arg("meldung.xta")
         .args(["--to", "dvdv:0241100012345"])
@@ -155,7 +155,7 @@ fn send_via_dvdv_resolution() {
 #[test]
 fn send_missing_pin_is_exit_2() {
     let (bridge_cmd, dir) = env_with_fake_bridge();
-    osci()
+    rosci()
         .arg("send")
         .arg("meldung.xta")
         .args(["--to", "cert:recipient.cer"])
@@ -173,7 +173,7 @@ fn send_missing_pin_is_exit_2() {
 #[test]
 fn send_missing_xta_file_is_exit_2() {
     let (bridge_cmd, dir) = env_with_fake_bridge();
-    osci()
+    rosci()
         .arg("send")
         .arg("gibt-es-nicht.xta")
         .args(["--to", "cert:recipient.cer"])
@@ -191,7 +191,7 @@ fn send_missing_xta_file_is_exit_2() {
 #[test]
 fn send_stdin_dash_works() {
     let (bridge_cmd, dir) = env_with_fake_bridge();
-    osci()
+    rosci()
         .arg("send")
         .arg("-")
         .args(["--to", "cert:recipient.cer"])
@@ -210,7 +210,7 @@ fn send_stdin_dash_works() {
 #[test]
 fn bad_to_spec_is_exit_2() {
     let (bridge_cmd, dir) = env_with_fake_bridge();
-    osci()
+    rosci()
         .arg("send")
         .arg("meldung.xta")
         .args(["--to", "telefon:040-123456"])
@@ -228,7 +228,7 @@ fn bad_to_spec_is_exit_2() {
 #[test]
 fn dvdv_unknown_org_is_exit_3() {
     let (_bridge_cmd, dir) = env_with_fake_bridge();
-    osci()
+    rosci()
         .arg("dvdv")
         .arg("find")
         .args(["--org", "0815"])
@@ -241,7 +241,7 @@ fn dvdv_unknown_org_is_exit_3() {
 #[test]
 fn dvdv_find_prints_entry() {
     let (_bridge_cmd, dir) = env_with_fake_bridge();
-    osci()
+    rosci()
         .arg("dvdv")
         .arg("find")
         .args(["--org", "0241100012345"])
@@ -258,7 +258,7 @@ fn dvdv_find_prints_entry() {
 fn fetch_writes_files() {
     let (bridge_cmd, dir) = env_with_fake_bridge();
     let out_dir = dir.path().join("post");
-    osci()
+    rosci()
         .arg("fetch")
         .arg("--all")
         .args(["--intermediary", "http://fake/entry"])
@@ -278,7 +278,7 @@ fn fetch_writes_files() {
 #[test]
 fn fetch_needs_selection_is_exit_2() {
     let (bridge_cmd, dir) = env_with_fake_bridge();
-    osci()
+    rosci()
         .arg("fetch")
         .args(["--intermediary", "http://fake/entry"])
         .args(["--intermediary-cert", "intermediary.cer"])
@@ -294,7 +294,7 @@ fn fetch_needs_selection_is_exit_2() {
 #[test]
 fn status_prints_laufzettel() {
     let (bridge_cmd, dir) = env_with_fake_bridge();
-    osci()
+    rosci()
         .arg("status")
         .arg("fake-msg-42")
         .args(["--intermediary", "http://fake/entry"])

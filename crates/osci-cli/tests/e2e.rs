@@ -154,8 +154,8 @@ impl E2e {
         Some((e2e, mock))
     }
 
-    fn osci(&self) -> AssertCommand {
-        let mut cmd = AssertCommand::cargo_bin("osci").unwrap();
+    fn rosci(&self) -> AssertCommand {
+        let mut cmd = AssertCommand::cargo_bin("rosci").unwrap();
         cmd.env(
             "OSCI_BRIDGE_JAR",
             repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
@@ -174,7 +174,7 @@ fn send_fetch_status_against_mock_intermediary() {
 
     // --- send via DVDV resolution, full crypto path ---------------------
     let output = e2e
-        .osci()
+        .rosci()
         .arg("send")
         .arg("meldung.xta")
         .args(["--to", "dvdv:0241100012345"])
@@ -233,7 +233,7 @@ fn send_fetch_status_against_mock_intermediary() {
     );
 
     // --- status (process card / Laufzettel) ------------------------------
-    e2e.osci()
+    e2e.rosci()
         .arg("status")
         .arg(&message_id)
         .args(["--intermediary", &_mock_url_from_dvdv(&e2e)])
@@ -246,7 +246,7 @@ fn send_fetch_status_against_mock_intermediary() {
         .success();
 
     // --- fetch (empty postbox is a success) -------------------------------
-    e2e.osci()
+    e2e.rosci()
         .arg("fetch")
         .arg("--all")
         .args(["--intermediary", &_mock_url_from_dvdv(&e2e)])
@@ -275,7 +275,7 @@ fn send_fails_cleanly_when_intermediary_is_down() {
         return;
     };
     // Point at a closed port: the bridge must surface a transport error (4).
-    e2e.osci()
+    e2e.rosci()
         .arg("send")
         .arg("meldung.xta")
         .args(["--to", "cert:recipient-cipher.pem"])

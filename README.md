@@ -1,6 +1,6 @@
 # osci-deshittifier
 
-> **`osci` — the curl of OSCI.** Send an arbitrary XTA message to any OSCI
+> **`rosci` — the curl of OSCI.** Send an arbitrary XTA message to any OSCI
 > recipient, resolved by recipient certificate or via DVDV, without first
 > filing a request in triplicate.
 
@@ -21,11 +21,11 @@ honest binary:
 
 ```sh
 # from a DVDV extract (see below)
-osci send meldung.xta --to dvdv:02411000012345 \
+rosci send meldung.xta --to dvdv:02411000012345 \
      --cert client.p12 --subject "XMeld 2.4 Anzeige"
 
 # or address the recipient certificate directly
-cat meldung.xta | osci send - --to cert:empfaenger.cer \
+cat meldung.xta | rosci send - --to cert:empfaenger.cer \
      --intermediary https://osci.example/entry \
      --intermediary-cert intermediar.cer \
      --cert client.p12
@@ -45,7 +45,7 @@ make build     # Java bridge + mock jars, Rust workspace
 make test      # all 66 tests, incl. e2e against the local mock intermediary
 make lint      # rustfmt + clippy -D warnings + mvn verify
 make audit     # cargo-deny: licenses, advisories, crate sources
-make release   # dist/bin/osci + dist/lib/osci-bridge.jar + SHA256SUMS
+make release   # dist/bin/rosci + dist/lib/osci-bridge.jar + SHA256SUMS
 ```
 
 Requirements: `docker` or `podman`, `make`, `git`. Nothing else touches
@@ -54,14 +54,14 @@ the host. See `container/LOCK.md` for the exact pinned toolchain.
 ## Usage
 
 ```
-osci send [-|<file.xta>] --to <cert:<path>|dvdv:<org-key>[:<category>]>
+rosci send [-|<file.xta>] --to <cert:<path>|dvdv:<org-key>[:<category>]>
           [--intermediary URL --intermediary-cert FILE]
           [--cert FILE] [--decrypter-cert FILE] [--subject TEXT]
           [--no-sign] [--no-encrypt] [--tls-ca FILE] [--json]
-osci fetch [--message-id ID | --all] [--out DIR] [--json]
-osci status <message-id> [--json]
-osci dvdv find --org KEY [--category CAT | --all] [--file dvdv.json] [--json]
-osci version [--require-bridge]
+rosci fetch [--message-id ID | --all] [--out DIR] [--json]
+rosci status <message-id> [--json]
+rosci dvdv find --org KEY [--category CAT | --all] [--file dvdv.json] [--json]
+rosci version [--require-bridge]
 ```
 
 Configuration comes from flags and `OSCI_*` environment variables only —
@@ -98,7 +98,7 @@ traces, so `osci` consumes a local JSON extract:
 }]
 ```
 
-`osci dvdv find --org 02411000012345` lists entries; `--to dvdv:…` sends
+`rosci dvdv find --org 02411000012345` lists entries; `--to dvdv:…` sends
 through them. The `DvdvDirectory` trait in `crates/osci` is the seam for a
 native online client when credentials-based lookup is acceptable.
 
@@ -106,7 +106,7 @@ native online client when credentials-based lookup is acceptable.
 
 ```
 ┌─────────┐  spawn    ┌──────────────────┐
-│  osci   │◄─JSON────►│ osci-bridge.jar  │  (de.osci library inside)
+│ rosci   │◄─JSON────►│ osci-bridge.jar  │  (de.osci library inside)
 │ (Rust)  │  stdio    │  JVM sidecar     │
 └─────────┘           └────────┬─────────┘
         flags/env only          │ OSCI 1.2 SOAP, sign+encrypt

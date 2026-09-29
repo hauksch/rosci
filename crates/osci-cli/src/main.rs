@@ -1,4 +1,4 @@
-//! `osci` — the curl of OSCI.
+//! `rosci` — the curl of OSCI.
 //!
 //! Sends an arbitrary XTA message through OSCI-Transport 1.2 with one
 //! command and zero ceremony. The heavy lifting happens in the Java
@@ -21,7 +21,7 @@ Exit codes: 0 ok · 2 usage/config · 3 DVDV miss · 4 transport/OSCI ·
 5 crypto · 6 bridge/internal";
 
 #[derive(Parser)]
-#[command(name = "osci", version, about = ABOUT, disable_help_subcommand = true)]
+#[command(name = "rosci", version, about = ABOUT, disable_help_subcommand = true)]
 struct Cli {
     /// verbosity: none = warnings, -v = info, -vv = debug, -vvv = trace
     #[arg(short, long, action = clap::ArgAction::Count)]
@@ -214,7 +214,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("osci: {err}");
+            eprintln!("rosci: {err}");
             if let Error::Bridge { feedback, .. } = &err {
                 for row in feedback {
                     if row.len() >= 2 {
@@ -522,7 +522,7 @@ fn cmd_dvdv(args: DvdvArgs) -> Result<(), Error> {
 }
 
 fn cmd_version(args: VersionArgs) -> Result<(), Error> {
-    println!("osci-cli   {}", env!("CARGO_PKG_VERSION"));
+    println!("rosci      {}", env!("CARGO_PKG_VERSION"));
 
     // A bare bridge ping — no identity, no intermediary, no drama.
     let cfg = match std::env::var("OSCI_BRIDGE_CMD") {
@@ -559,7 +559,7 @@ fn cmd_version(args: VersionArgs) -> Result<(), Error> {
             let _ = bridge.wait();
         }
         Err(err) if !args.require_bridge => {
-            eprintln!("osci: bridge not reachable, local info only ({err})");
+            eprintln!("rosci: bridge not reachable, local info only ({err})");
         }
         Err(err) => return Err(err),
     }

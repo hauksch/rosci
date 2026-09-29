@@ -83,7 +83,7 @@ release: image ## Produce dist/: osci binary, osci-bridge.jar, SHA256SUMS
 	$(IN_CONTAINER) cargo build --workspace --release
 	$(IN_CONTAINER) bash -c '\
 	  install -d dist/bin dist/lib \
-	  && install -m 0755 target/release/osci dist/bin/osci \
+	  && install -m 0755 target/release/rosci dist/bin/rosci \
 	  && install -m 0644 java/osci-bridge/target/osci-bridge.jar dist/lib/osci-bridge.jar \
 	  && cd dist && find . -type f ! -name SHA256SUMS -exec sha256sum {} \; > SHA256SUMS'
 	@echo "Release artifacts in dist/ — checksums in dist/SHA256SUMS."

@@ -72,7 +72,7 @@ impl FileDvdv {
         }
     }
 
-    /// All entries, sorted by org key. For `osci dvdv find --all`.
+    /// All entries, sorted by org key. For `rosci dvdv find --all`.
     pub fn all(&self) -> Vec<DvdvEntry> {
         let mut all = self.entries.clone();
         all.sort_by(|a, b| a.org_key.cmp(&b.org_key));

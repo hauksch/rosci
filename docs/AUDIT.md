@@ -36,7 +36,7 @@ make release
 cd dist && sha256sum -c SHA256SUMS
 ```
 
-`dist/` contains `bin/osci` and `lib/osci-bridge.jar` — keep them together
+`dist/` contains `bin/rosci` and `lib/osci-bridge.jar` — keep them together
 or set `OSCI_BRIDGE_JAR`.
 
 ## Verify the tests
@@ -78,7 +78,7 @@ An audit that only lists virtues is a brochure. Known limits, in the open:
    not zeroized memory. If your threat model includes core dumps, file a
    feature request (or a patch; patches age better than requests).
 3. **DVDV is file-based.** Recipient resolution uses a local JSON extract
-   (`--dvdv-file`, `osci dvdv find`) rather than the online FITKO REST
+   (`--dvdv-file`, `rosci dvdv find`) rather than the online FITKO REST
    service, which requires OAuth client credentials and would leave
    online traces. The `DvdvDirectory` trait is the seam for a native
    online client; `resolve_dvdv` is already wired through it.
