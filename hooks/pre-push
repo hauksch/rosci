@@ -1,0 +1,12 @@
+#!/bin/sh
+#
+# This repository is on a strict data-protection diet: it never leaves the
+# building. Not to GitHub, not to GitLab, not even to a USB stick labelled
+# "Sicherheitskopie final_v2 REALLY". The mission says so.
+#
+# If you genuinely want to push this somewhere, delete this hook AND re-read
+# the mission statement in README.md. Twice.
+#
+echo "DENIED: pushing this repository anywhere is forbidden (mission rule: leave no traces online)." >&2
+echo "If you really must, remove hooks/pre-push and `git config core.hooksPath` first." >&2
+exit 1

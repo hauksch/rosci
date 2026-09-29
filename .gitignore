@@ -1,0 +1,31 @@
+# Build outputs
+/dist/
+target/
+java/**/target/
+**/*.rs.bk
+
+# Local caches. Everything must stay *inside* this directory (mission rule),
+# but none of it belongs in git.
+/.cargo-home/
+/.m2-repo/
+/.deps/
+/.rustup/
+
+# Secrets and generated test PKI. Test certs are generated per-run in the
+# container and must never be committed. Yes, we trust ourselves less than
+# the §6 BDSG compliance checklist. That is the point.
+*.p12
+*.pfx
+*.jks
+*.pem
+*.key
+*.crt
+*.csr
+.env
+.env.*
+
+# IDE and OS droppings — the bureaucracy of tooling, if you will
+.idea/
+.vscode/
+*.iml
+.DS_Store
