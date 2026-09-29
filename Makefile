@@ -93,7 +93,7 @@ manifest: image ## (Re)generate the Java dependency checksum manifest (commit th
 .PHONY: verify-deps
 verify-deps: image ## Verify the maven cache against DEPENDENCY_MANIFEST.sha256
 	$(IN_CONTAINER) bash -c '\
-	  (cd .m2-repo && sha256sum -c ../../../java/osci-bridge/DEPENDENCY_MANIFEST.sha256)'
+	  (cd .m2-repo && sha256sum -c ../java/osci-bridge/DEPENDENCY_MANIFEST.sha256)'
 
 .PHONY: git-guard
 git-guard: ## Fail if this repository ever grows a remote (mission rule: no traces)
