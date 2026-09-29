@@ -1,0 +1,22 @@
+[package]
+name = "osci-cli"
+description = "The curl of OSCI — send arbitrary XTA through OSCI-Transport 1.2 without the ceremony."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "osci"
+path = "src/main.rs"
+
+[dependencies]
+osci = { path = "../osci" }
+clap = { version = "4", features = ["derive", "env"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
