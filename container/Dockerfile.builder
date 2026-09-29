@@ -40,6 +40,12 @@ RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain "${RUST_VE
     && chmod -R a+rX /opt/rustup /opt/cargo
 ENV PATH=/opt/cargo/bin:$PATH
 
+# cargo-deny for license/advisory enforcement (see deny.toml). Pinned like
+# everything else; a supply-chain gate that floats is a suggestion.
+ARG CARGO_DENY_VERSION=0.20.2
+RUN /opt/cargo/bin/cargo install cargo-deny --locked --version "${CARGO_DENY_VERSION}" \
+    && chmod -R a+rX /opt/cargo
+
 # --- Maven (pinned, checksummed) ----------------------------------------------
 RUN curl -fsSL -o /tmp/maven.tgz \
         "https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/${MAVEN_VERSION}/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \

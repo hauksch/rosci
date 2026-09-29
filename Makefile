@@ -73,6 +73,10 @@ lint: image ## Rustfmt + clippy -D warnings + maven verify
 	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml verify
 	$(IN_CONTAINER) $(MVN) -f java/osci-mock/pom.xml verify
 
+.PHONY: audit
+audit: image ## cargo-deny: licenses, advisories, crate sources
+	$(IN_CONTAINER) cargo deny --config deny.toml check --hide-inclusion-graph licenses advisories sources
+
 .PHONY: release
 release: image ## Produce dist/: osci binary, osci-bridge.jar, SHA256SUMS
 	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml package
@@ -81,7 +85,7 @@ release: image ## Produce dist/: osci binary, osci-bridge.jar, SHA256SUMS
 	  install -d dist/bin dist/lib \
 	  && install -m 0755 target/release/osci dist/bin/osci \
 	  && install -m 0644 java/osci-bridge/target/osci-bridge.jar dist/lib/osci-bridge.jar \
-	  && cd dist && find . -type f -exec sha256sum {} \; > SHA256SUMS'
+	  && cd dist && find . -type f ! -name SHA256SUMS -exec sha256sum {} \; > SHA256SUMS'
 	@echo "Release artifacts in dist/ — checksums in dist/SHA256SUMS."
 
 .PHONY: manifest
