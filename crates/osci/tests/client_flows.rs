@@ -5,8 +5,8 @@
 use std::io::Write;
 use std::time::Duration;
 
-use osci::dvdv::{DvdvEntry, FileDvdv};
 use osci::bridge::BridgeConfig;
+use osci::dvdv::{DvdvEntry, FileDvdv};
 use osci::{Error, FetchQuery, Identity, Intermediary, OsciClient, Recipient, Xta};
 
 const HAPPY: &str = r#"
@@ -90,7 +90,9 @@ fn send_without_recipient_is_config_error() {
 #[test]
 fn fetch_flow_decodes_messages() {
     let mut client = test_client();
-    let messages = client.fetch(FetchQuery::ByMessageId("fake-msg-17".into())).unwrap();
+    let messages = client
+        .fetch(FetchQuery::ByMessageId("fake-msg-17".into()))
+        .unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].subject.as_deref(), Some("XMeld"));
     assert_eq!(messages[0].signatures_valid, Some(true));

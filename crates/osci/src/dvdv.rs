@@ -72,9 +72,9 @@ impl FileDvdv {
         }
     }
 
-    /// All entries, sorted by org key. For `osci dvdv find` without a key.
-    pub fn all(&self) -> Vec<&DvdvEntry> {
-        let mut all: Vec<&DvdvEntry> = self.entries.iter().collect();
+    /// All entries, sorted by org key. For `osci dvdv find --all`.
+    pub fn all(&self) -> Vec<DvdvEntry> {
+        let mut all = self.entries.clone();
         all.sort_by(|a, b| a.org_key.cmp(&b.org_key));
         all
     }
@@ -95,7 +95,9 @@ impl DvdvDirectory for FileDvdv {
         if hits.is_empty() {
             return Err(Error::DvdvLookup(format!(
                 "no DVDV entry for org key {org_key}{}",
-                category.map(|c| format!(" (category {c})")).unwrap_or_default()
+                category
+                    .map(|c| format!(" (category {c})"))
+                    .unwrap_or_default()
             )));
         }
         hits.sort_by(|a, b| a.name.cmp(&b.name));
@@ -108,14 +110,16 @@ pub fn validate_entry(entry: &DvdvEntry) -> Result<(), Error> {
     if entry.org_key.trim().is_empty() {
         return Err(Error::DvdvLookup("entry has empty org_key".into()));
     }
-    if !entry.intermediary_url.starts_with("http://") && !entry.intermediary_url.starts_with("https://")
+    if !entry.intermediary_url.starts_with("http://")
+        && !entry.intermediary_url.starts_with("https://")
     {
         return Err(Error::DvdvLookup(format!(
             "entry {} has non-http intermediary url {:?}",
             entry.org_key, entry.intermediary_url
         )));
     }
-    if entry.intermediary_cipher_cert.trim().is_empty() || entry.recipient_cipher_cert.trim().is_empty()
+    if entry.intermediary_cipher_cert.trim().is_empty()
+        || entry.recipient_cipher_cert.trim().is_empty()
     {
         return Err(Error::DvdvLookup(format!(
             "entry {} is missing certificate material",

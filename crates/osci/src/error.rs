@@ -22,7 +22,7 @@ pub enum BridgeErrorKind {
 }
 
 impl BridgeErrorKind {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "protocol" => Self::Protocol,
             "crypto" => Self::Crypto,
@@ -65,7 +65,9 @@ pub enum Error {
     BridgeProtocol(String),
 
     /// The bridge did not answer within the configured timeout.
-    #[error("bridge timed out after {timeout_ms} ms — the intermediary is probably still stamping")]
+    #[error(
+        "bridge timed out after {timeout_ms} ms — the intermediary is probably still stamping"
+    )]
     BridgeTimeout { timeout_ms: u64 },
 
     /// The bridge reported a structured failure.

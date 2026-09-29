@@ -248,7 +248,10 @@ mod tests {
             "\"tls\"",
         ] {
             if needle == "\"selection_mode\"" || needle == "\"tls\"" {
-                assert!(!json.contains(needle), "absent fields must stay absent: {json}");
+                assert!(
+                    !json.contains(needle),
+                    "absent fields must stay absent: {json}"
+                );
             } else {
                 assert!(json.contains(needle), "missing {needle} in {json}");
             }

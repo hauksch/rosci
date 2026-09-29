@@ -132,13 +132,24 @@ impl BridgeHandle {
             .and_then(|_| self.stdin.flush())
             .map_err(|e| Error::BridgeProtocol(format!("bridge closed its stdin: {e}")))?;
 
-        let line = self
-            .lines
-            .recv_timeout(self.response_timeout)
-            .map_err(|_| Error::bridge_timeout(self.response_timeout.as_millis() as u64))?;
+        let line = match self.lines.recv_timeout(self.response_timeout) {
+            Ok(line) => line,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                return Err(Error::bridge_timeout(
+                    self.response_timeout.as_millis() as u64
+                ))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                // The reader thread hit EOF: the bridge process is gone.
+                return Err(Error::BridgeProtocol(
+                    "bridge exited before answering".into(),
+                ));
+            }
+        };
 
-        let rsp: Response = serde_json::from_str(&line)
-            .map_err(|e| Error::BridgeProtocol(format!("unparseable bridge response: {e}: {line}")))?;
+        let rsp: Response = serde_json::from_str(&line).map_err(|e| {
+            Error::BridgeProtocol(format!("unparseable bridge response: {e}: {line}"))
+        })?;
 
         if let Some(id) = &rsp.id {
             if id != &expected_id {
@@ -150,9 +161,7 @@ impl BridgeHandle {
         if !rsp.ok {
             let err = rsp.error.unwrap_or_default();
             return Err(Error::Bridge {
-                kind: BridgeErrorKind::from_str(
-                    err.kind.as_deref().unwrap_or("internal"),
-                ),
+                kind: BridgeErrorKind::parse(err.kind.as_deref().unwrap_or("internal")),
                 message: err.message.unwrap_or_else(|| "unknown bridge error".into()),
                 feedback: err.feedback.unwrap_or_default(),
             });

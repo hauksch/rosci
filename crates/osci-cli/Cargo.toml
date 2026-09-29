@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 osci = { path = "../osci" }
+base64 = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }

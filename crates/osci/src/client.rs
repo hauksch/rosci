@@ -184,9 +184,7 @@ impl OsciClientBuilder {
             .intermediary
             .filter(|i| !i.url.is_empty() && !i.cipher_cert.is_empty())
             .ok_or_else(|| {
-                Error::Config(
-                    "intermediary (url + cipher certificate) is required".to_string(),
-                )
+                Error::Config("intermediary (url + cipher certificate) is required".to_string())
             })?;
         let identity = self
             .identity
@@ -221,7 +219,10 @@ impl Recipient {
     pub fn from_cipher_cert_file(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
         let pem = std::fs::read_to_string(path).map_err(|e| {
-            Error::Config(format!("cannot read recipient certificate {}: {e}", path.display()))
+            Error::Config(format!(
+                "cannot read recipient certificate {}: {e}",
+                path.display()
+            ))
         })?;
         Ok(Self {
             cipher_cert: pem,
@@ -325,7 +326,10 @@ pub fn resolve_dvdv<D: DvdvDirectory + ?Sized>(
         )));
     };
     crate::dvdv::validate_entry(&entry)?;
-    let intermediary = Intermediary::new(entry.intermediary_url.clone(), entry.intermediary_cipher_cert.clone());
+    let intermediary = Intermediary::new(
+        entry.intermediary_url.clone(),
+        entry.intermediary_cipher_cert.clone(),
+    );
     Ok((intermediary, Recipient::from_dvdv_entry(&entry)))
 }
 

@@ -36,6 +36,7 @@ RUN apt-get update \
 ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain "${RUST_VERSION}" --profile minimal \
+    && /opt/cargo/bin/rustup component add rustfmt clippy \
     && chmod -R a+rX /opt/rustup /opt/cargo
 ENV PATH=/opt/cargo/bin:$PATH
 

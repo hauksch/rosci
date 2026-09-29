@@ -64,10 +64,7 @@ fn ping_round_trip_with_fake_bridge() {
     let mut bridge = BridgeHandle::spawn(&happy_config(&dir)).unwrap();
     let rsp = bridge.call(request("ping")).unwrap();
     assert!(rsp.ok);
-    assert_eq!(
-        rsp.result.unwrap().versions.unwrap()["bridge"],
-        "fake-1.0"
-    );
+    assert_eq!(rsp.result.unwrap().versions.unwrap()["bridge"], "fake-1.0");
     bridge.shutdown();
     let code = bridge.wait().unwrap();
     assert_eq!(code, Some(0), "fake bridge must exit cleanly");
@@ -77,8 +74,8 @@ fn ping_round_trip_with_fake_bridge() {
 fn garbage_response_is_a_protocol_violation() {
     let dir = tempfile::tempdir().unwrap();
     let script = write_script(&dir, "garbage.sh", "echo '42 ist keine antwort'\n");
-    let mut bridge = BridgeHandle::spawn(&BridgeConfig::cmd(["bash", script.to_str().unwrap()]))
-        .unwrap();
+    let mut bridge =
+        BridgeHandle::spawn(&BridgeConfig::cmd(["bash", script.to_str().unwrap()])).unwrap();
     let err = bridge.call(request("ping")).unwrap_err();
     assert!(matches!(err, Error::BridgeProtocol(_)), "got: {err:?}");
 }
@@ -120,7 +117,11 @@ fn structured_error_maps_to_bridge_error() {
         BridgeHandle::spawn(&BridgeConfig::cmd(["bash", script.to_str().unwrap()])).unwrap();
     let err = bridge.call(request("ping")).unwrap_err();
     match err {
-        Error::Bridge { kind, message, feedback } => {
+        Error::Bridge {
+            kind,
+            message,
+            feedback,
+        } => {
             assert_eq!(kind.as_str(), "crypto");
             assert!(message.contains("schluessel"));
             assert!(feedback.is_empty());
