@@ -31,6 +31,13 @@ public final class Protocol
     public Payload content; // send: the XTA payload as opaque bytes
     public Boolean sign; // send, default true
     public Boolean encrypt; // send, default true
+    /**
+     * Test mode: disable SOAP-transport-level encryption and signatures so a
+     * local mock intermediary can parse the envelope. Content signing and
+     * content encryption remain fully active. Never point this at anything
+     * you don't own — the name says insecure because it is.
+     */
+    public Boolean insecure_transport;
     public Tls tls; // optional TLS knobs for all ops that talk to an intermediary
     public String selection_mode; // fetch / process-card
     public String selection_rule; // fetch / process-card

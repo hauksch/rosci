@@ -27,14 +27,18 @@ pub struct BridgeConfig {
 }
 
 impl BridgeConfig {
-    /// The canonical launch: `java -jar <path>`.
+    /// The canonical launch: `java -jar <path>`, plus any extra JVM flags
+    /// from `OSCI_JAVA_OPTS` (split on whitespace — a debugging hatch, not
+    /// a place to hide your hopes).
     pub fn java_jar<P: AsRef<std::path::Path>>(jar: P) -> Self {
+        let mut cmd: Vec<String> = vec!["java".to_string()];
+        if let Ok(extra) = std::env::var("OSCI_JAVA_OPTS") {
+            cmd.extend(extra.split_whitespace().map(str::to_string));
+        }
+        cmd.push("-jar".to_string());
+        cmd.push(jar.as_ref().to_string_lossy().into_owned());
         Self {
-            cmd: vec![
-                "java".to_string(),
-                "-jar".to_string(),
-                jar.as_ref().to_string_lossy().into_owned(),
-            ],
+            cmd,
             response_timeout: Duration::from_secs(300),
         }
     }
@@ -181,6 +185,7 @@ impl BridgeHandle {
             content: None,
             sign: None,
             encrypt: None,
+            insecure_transport: None,
             tls: None,
             selection_mode: None,
             selection_rule: None,

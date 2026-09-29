@@ -52,6 +52,7 @@ fn request(op: &'static str) -> osci::protocol::Request {
         content: None,
         sign: None,
         encrypt: None,
+        insecure_transport: None,
         tls: None,
         selection_mode: None,
         selection_rule: None,

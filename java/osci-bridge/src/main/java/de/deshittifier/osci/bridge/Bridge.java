@@ -31,7 +31,9 @@ public final class Bridge
   public static void main(String[] args) throws IOException
   {
     // Configure slf4j-simple before anything logs: warn level, stderr only.
-    System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn");
+    // A pre-set -D defaultLogLevel (debug archaeology) wins over our default.
+    if (System.getProperty("org.slf4j.simpleLogger.defaultLogLevel") == null)
+      System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn");
     System.setProperty("org.slf4j.simpleLogger.logFile", "System.err");
 
     Security.addProvider(new BouncyCastleProvider());

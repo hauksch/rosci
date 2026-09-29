@@ -18,6 +18,7 @@ pub struct OsciClient {
     intermediary: Intermediary,
     identity: Identity,
     tls: Tls,
+    insecure_transport: bool,
 }
 
 impl std::fmt::Debug for OsciClient {
@@ -109,6 +110,9 @@ impl OsciClient {
         req.intermediary = Some(self.intermediary.to_msg());
         req.identity = Some(self.identity.to_msg());
         req.tls = Some(self.tls.to_msg());
+        if self.insecure_transport {
+            req.insecure_transport = Some(false);
+        }
         req
     }
 }
@@ -122,6 +126,7 @@ pub struct OsciClientBuilder {
     intermediary: Option<Intermediary>,
     identity: Option<Identity>,
     tls: Tls,
+    insecure_transport: bool,
 }
 
 impl Default for OsciClientBuilder {
@@ -131,6 +136,7 @@ impl Default for OsciClientBuilder {
             intermediary: None,
             identity: None,
             tls: Tls::default(),
+            insecure_transport: false,
         }
     }
 }
@@ -177,6 +183,15 @@ impl OsciClientBuilder {
         self
     }
 
+    /// Test mode: disable SOAP-transport encryption and transport
+    /// signatures so a local mock intermediary can parse envelopes.
+    /// Content signing/encryption stay on. Use only against endpoints
+    /// you own; the flag is named honestly.
+    pub fn insecure_transport(mut self) -> Self {
+        self.insecure_transport = true;
+        self
+    }
+
     /// Spawns the bridge and performs the `ping` handshake. Fails loudly
     /// and early, the way incidents reports wish they could.
     pub fn build(self) -> Result<OsciClient, Error> {
@@ -203,6 +218,7 @@ impl OsciClientBuilder {
             intermediary,
             identity,
             tls: self.tls,
+            insecure_transport: self.insecure_transport,
         })
     }
 }
@@ -344,6 +360,7 @@ fn base_request(op: &'static str) -> Request {
         content: None,
         sign: None,
         encrypt: None,
+        insecure_transport: None,
         tls: None,
         selection_mode: None,
         selection_rule: None,

@@ -80,6 +80,12 @@ struct ConnArgs {
     #[arg(long, env = "OSCI_TLS_CA")]
     tls_ca: Option<PathBuf>,
 
+    /// Test mode: disable SOAP-transport encryption/signatures so local
+    /// mock intermediaries can parse envelopes. Content crypto stays on.
+    /// Only ever point this at endpoints you own.
+    #[arg(long)]
+    insecure_transport: bool,
+
     /// Path to the osci-bridge.jar.
     #[arg(long, env = "OSCI_BRIDGE_JAR", default_value = "osci-bridge.jar")]
     bridge_jar: PathBuf,
@@ -277,6 +283,9 @@ fn build_client(conn: &ConnArgs, intermediary: Option<Intermediary>) -> Result<O
         .bridge_config(bridge_config(conn))
         .identity(identity);
 
+    if conn.insecure_transport {
+        builder = builder.insecure_transport();
+    }
     if let Some(intermediary) = intermediary {
         builder = builder.intermediary(intermediary);
     }
@@ -354,6 +363,9 @@ fn cmd_send(args: SendArgs) -> Result<(), Error> {
     let mut builder = OsciClient::builder()
         .bridge_config(bridge_config(&args.conn))
         .identity(identity);
+    if args.conn.insecure_transport {
+        builder = builder.insecure_transport();
+    }
     if let Some(intermediary) = intermediary {
         builder = builder.intermediary(intermediary);
     }
@@ -533,6 +545,7 @@ fn cmd_version(args: VersionArgs) -> Result<(), Error> {
                 content: None,
                 sign: None,
                 encrypt: None,
+                insecure_transport: None,
                 tls: None,
                 selection_mode: None,
                 selection_rule: None,

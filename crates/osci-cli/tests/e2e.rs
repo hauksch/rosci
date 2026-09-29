@@ -1,0 +1,292 @@
+//! End-to-end: the real `osci` binary + the real Java bridge jar + the
+//! mock intermediary on localhost. No internet, no traces, no mercy.
+//!
+//! Skips gracefully when java/openssl or the jars are unavailable (host
+//! development); inside the builder container `make test` provides all of
+//! them. Network endpoints touched: 127.0.0.1 only.
+
+use std::io::{BufRead, BufReader};
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::Duration;
+
+use assert_cmd::Command as AssertCommand;
+use predicates::prelude::*;
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+struct MockIntermediary {
+    child: Child,
+    port: u16,
+}
+
+impl MockIntermediary {
+    fn start(dump_dir: &Path) -> Option<Self> {
+        let jar = repo_root().join("java/osci-mock/target/osci-mock.jar");
+        if !jar.is_file() || which_java().is_none() {
+            eprintln!("e2e: skipping (mock jar or java missing)");
+            return None;
+        }
+        let port = free_port();
+        let mut child = Command::new(which_java().unwrap())
+            .arg("-jar")
+            .arg(&jar)
+            .arg(port.to_string())
+            .arg(dump_dir.to_str().unwrap())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("spawn mock intermediary");
+
+        // Wait for READY with a deadline — a JVM that never wakes up is a
+        // test failure, not a coffee break.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let mut ready = String::new();
+        {
+            let stdout = child.stdout.take().expect("piped stdout");
+            let mut reader = BufReader::new(stdout);
+            loop {
+                if std::time::Instant::now() > deadline {
+                    panic!("mock intermediary did not report READY in time");
+                }
+                ready.clear();
+                if reader.read_line(&mut ready).unwrap_or(0) == 0 {
+                    panic!("mock intermediary exited before READY");
+                }
+                if ready.starts_with("READY") {
+                    break;
+                }
+            }
+        }
+        Some(Self { child, port })
+    }
+
+    fn url(&self) -> String {
+        format!(
+            "http://127.0.0.1:{}/osci-manager-entry/externalentry",
+            self.port
+        )
+    }
+}
+
+impl Drop for MockIntermediary {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn which_java() -> Option<String> {
+    ["java", "/usr/bin/java"]
+        .iter()
+        .find(|c| Command::new(c).arg("-version").output().is_ok())
+        .map(|c| c.to_string())
+}
+
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .expect("bind ephemeral port")
+        .local_addr()
+        .expect("local addr")
+        .port()
+}
+
+struct E2e {
+    workdir: PathBuf,
+    _pki_cleanup: tempfile::TempDir,
+}
+
+impl E2e {
+    fn setup() -> Option<(Self, MockIntermediary)> {
+        let bridge_jar = repo_root().join("java/osci-bridge/target/osci-bridge.jar");
+        if !bridge_jar.is_file() || which_java().is_none() {
+            eprintln!("e2e: skipping (bridge jar or java missing)");
+            return None;
+        }
+        if Command::new("openssl").arg("version").output().is_err() {
+            eprintln!("e2e: skipping (openssl missing)");
+            return None;
+        }
+
+        let pki_dir = tempfile::tempdir().expect("pki tempdir");
+        let status = Command::new(repo_root().join("tests/gen-pki.sh"))
+            .arg(pki_dir.path())
+            .status()
+            .expect("run gen-pki.sh");
+        assert!(status.success(), "PKI generation failed");
+
+        let dump_dir = pki_dir.path().join("dump");
+        std::fs::create_dir_all(&dump_dir).unwrap();
+        let mock = MockIntermediary::start(&dump_dir)?;
+
+        // Working directory for the CLI: the PKI dir doubles as the cwd.
+        let workdir = pki_dir.path().to_path_buf();
+        let e2e = Self {
+            workdir: workdir.clone(),
+            _pki_cleanup: pki_dir,
+        };
+
+        // dvdv.json for the mock intermediary.
+        let intermed_cert = std::fs::read_to_string(workdir.join("intermed-cipher.pem")).unwrap();
+        let recipient_cert = std::fs::read_to_string(workdir.join("recipient-cipher.pem")).unwrap();
+        let dvdv = serde_json::json!([{
+            "org_key": "0241100012345",
+            "name": "Mock-Empfaenger",
+            "intermediary_url": mock.url(),
+            "intermediary_cipher_cert": intermed_cert,
+            "recipient_cipher_cert": recipient_cert,
+        }]);
+        std::fs::write(
+            workdir.join("dvdv.json"),
+            serde_json::to_vec_pretty(&dvdv).unwrap(),
+        )
+        .unwrap();
+
+        std::fs::write(
+            workdir.join("meldung.xta"),
+            "<?xml version=\"1.0\"?><XTA><meldung>hallo behoerde</meldung></XTA>",
+        )
+        .unwrap();
+
+        Some((e2e, mock))
+    }
+
+    fn osci(&self) -> AssertCommand {
+        let mut cmd = AssertCommand::cargo_bin("osci").unwrap();
+        cmd.env(
+            "OSCI_BRIDGE_JAR",
+            repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
+        )
+        .env("OSCI_CERT_PIN", "testpin")
+        .current_dir(&self.workdir);
+        cmd
+    }
+}
+
+#[test]
+fn send_fetch_status_against_mock_intermediary() {
+    let Some((e2e, _mock)) = E2e::setup() else {
+        return;
+    };
+
+    // --- send via DVDV resolution, full crypto path ---------------------
+    let output = e2e
+        .osci()
+        .arg("send")
+        .arg("meldung.xta")
+        .args(["--to", "dvdv:0241100012345"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--insecure-transport")
+        .arg("--subject")
+        .arg("e2e test sendung")
+        .arg("--json")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let receipt: serde_json::Value = serde_json::from_slice(&output).expect("parse receipt json");
+    let message_id = receipt["message_id"]
+        .as_str()
+        .expect("message id")
+        .to_string();
+    assert!(
+        !message_id.is_empty(),
+        "message id must not be empty: {message_id}"
+    );
+
+    // The mock dumped what actually crossed the wire: assert the store
+    // delivery envelope carries the subject and the attachment reference —
+    // and that the XTA itself is NOT plaintext (content encryption on).
+    let dump_dir = e2e.workdir.join("dump");
+    let store_envelope = std::fs::read_to_string(
+        dump_dir
+            .read_dir()
+            .expect("dump dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| {
+                std::fs::read_to_string(p)
+                    .map(|c| c.contains("storeDelivery"))
+                    .unwrap_or(false)
+            })
+            .expect("store delivery dump"),
+    )
+    .unwrap();
+    assert!(
+        store_envelope.contains("e2e test sendung"),
+        "subject must ride along"
+    );
+    assert!(
+        store_envelope.contains("meldung.xta"),
+        "attachment ref must ride along"
+    );
+    assert!(
+        !store_envelope.contains("hallo behoerde"),
+        "XTA content must be encrypted, not plaintext"
+    );
+
+    // --- status (process card / Laufzettel) ------------------------------
+    e2e.osci()
+        .arg("status")
+        .arg(&message_id)
+        .args(["--intermediary", &_mock_url_from_dvdv(&e2e)])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--insecure-transport")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .success();
+
+    // --- fetch (empty postbox is a success) -------------------------------
+    e2e.osci()
+        .arg("fetch")
+        .arg("--all")
+        .args(["--intermediary", &_mock_url_from_dvdv(&e2e)])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--insecure-transport")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("postbox empty").or(predicate::str::contains("message:")));
+}
+
+fn _mock_url_from_dvdv(e2e: &E2e) -> String {
+    let dvdv: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(e2e.workdir.join("dvdv.json")).unwrap()).unwrap();
+    dvdv[0]["intermediary_url"]
+        .as_str()
+        .expect("url")
+        .to_string()
+}
+
+#[test]
+fn send_fails_cleanly_when_intermediary_is_down() {
+    let Some((e2e, _mock)) = E2e::setup() else {
+        return;
+    };
+    // Point at a closed port: the bridge must surface a transport error (4).
+    e2e.osci()
+        .arg("send")
+        .arg("meldung.xta")
+        .args(["--to", "cert:recipient-cipher.pem"])
+        .args([
+            "--intermediary",
+            &format!("http://127.0.0.1:{}/entry", free_port()),
+        ])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .timeout(Duration::from_secs(120))
+        .assert()
+        .failure()
+        .code(4);
+}

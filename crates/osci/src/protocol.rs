@@ -30,6 +30,11 @@ pub struct Request {
     pub sign: Option<bool>,
     #[serde(skip_serializing_if = "is_none")]
     pub encrypt: Option<bool>,
+    /// Test mode: plain SOAP transport (see the Java-side twin of this
+    /// field). `Some(false)` disables transport encryption/signatures;
+    /// content crypto is unaffected.
+    #[serde(skip_serializing_if = "is_none")]
+    pub insecure_transport: Option<bool>,
     #[serde(skip_serializing_if = "is_none")]
     pub tls: Option<TlsMsg>,
     #[serde(skip_serializing_if = "is_none")]
@@ -234,6 +239,7 @@ mod tests {
             }),
             sign: Some(true),
             encrypt: Some(false),
+            insecure_transport: None,
             tls: None,
             selection_mode: None,
             selection_rule: None,

@@ -74,7 +74,7 @@ public final class OsciOps
     X509Certificate intermedCipher = CryptoMaterial.parseCertificate(req.intermediary.cipher_cert);
     Intermed intermed = new Intermed(null, intermedCipher, URI.create(req.intermediary.url));
 
-    DialogHandler dialog = new DialogHandler(me, intermed, new BridgeTransport(req.tls));
+    DialogHandler dialog = newDialog(me, intermed, req);
 
     try
     {
@@ -91,10 +91,18 @@ public final class OsciOps
 
       ContentContainer coco = new ContentContainer();
       String filename = req.content.filename != null ? req.content.filename : "message.xta";
-      coco.addContent(new Content(new Attachment(new ByteArrayInputStream(xta), filename)));
 
       boolean sign = req.sign == null || req.sign;
       boolean encrypt = req.encrypt == null || req.encrypt;
+
+      // Attachments inside an EncryptedDataOSCI must announce their cipher
+      // algorithm; plain attachments must not. The library checks, and it
+      // is right to — this once.
+      Attachment attachment = encrypt
+        ? new Attachment(new ByteArrayInputStream(xta), filename,
+                         Constants.SYMMETRIC_CIPHER_ALGORITHM_AES256_GCM)
+        : new Attachment(new ByteArrayInputStream(xta), filename);
+      coco.addContent(new Content(attachment));
 
       if (sign)
         coco.sign(me);
@@ -146,7 +154,7 @@ public final class OsciOps
     Intermed intermed = new Intermed(null,
                                      CryptoMaterial.parseCertificate(req.intermediary.cipher_cert),
                                      URI.create(req.intermediary.url));
-    DialogHandler dialog = new DialogHandler(me, intermed, new BridgeTransport(req.tls));
+    DialogHandler dialog = newDialog(me, intermed, req);
 
     try
     {
@@ -232,7 +240,7 @@ public final class OsciOps
     Intermed intermed = new Intermed(null,
                                      CryptoMaterial.parseCertificate(req.intermediary.cipher_cert),
                                      URI.create(req.intermediary.url));
-    DialogHandler dialog = new DialogHandler(me, intermed, new BridgeTransport(req.tls));
+    DialogHandler dialog = newDialog(me, intermed, req);
 
     try
     {
@@ -324,6 +332,22 @@ public final class OsciOps
   }
 
   // --------------------------------------------------------------- helpers
+
+  /**
+   * Builds the dialog handler, honoring the insecure-transport test mode:
+   * SOAP-envelope encryption and transport signatures off, everything else
+   * (content signing, content encryption) untouched.
+   */
+  private static DialogHandler newDialog(Originator me, Intermed intermed, Protocol.Request req)
+  {
+    DialogHandler dialog = new DialogHandler(me, intermed, new BridgeTransport(req.tls));
+    if (Boolean.FALSE.equals(req.insecure_transport))
+    {
+      dialog.setEncryption(false);
+      dialog.setCreateSignatures(false);
+    }
+    return dialog;
+  }
 
   private static void requireSendShape(Protocol.Request req)
   {

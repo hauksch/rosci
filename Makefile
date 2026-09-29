@@ -55,13 +55,15 @@ image: ## Build the pinned builder container image
 	$(OCI) build -f container/Dockerfile.builder -t $(IMAGE) container/
 
 .PHONY: build
-build: image ## Build everything (Java bridge jar + Rust workspace)
+build: image ## Build everything (Java bridge + mock jars, Rust workspace)
 	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml package
+	$(IN_CONTAINER) $(MVN) -f java/osci-mock/pom.xml package
 	$(IN_CONTAINER) cargo build --workspace --all-targets
 
 .PHONY: test
 test: image ## Run all tests (Java unit + Rust unit/integration/e2e)
 	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml test
+	$(IN_CONTAINER) $(MVN) -f java/osci-mock/pom.xml package
 	$(IN_CONTAINER) cargo test --workspace
 
 .PHONY: lint
@@ -69,6 +71,7 @@ lint: image ## Rustfmt + clippy -D warnings + maven verify
 	$(IN_CONTAINER) cargo fmt --all -- --check
 	$(IN_CONTAINER) cargo clippy --workspace --all-targets -- -D warnings
 	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml verify
+	$(IN_CONTAINER) $(MVN) -f java/osci-mock/pom.xml verify
 
 .PHONY: release
 release: image ## Produce dist/: osci binary, osci-bridge.jar, SHA256SUMS
