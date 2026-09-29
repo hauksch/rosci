@@ -19,10 +19,15 @@ IMAGE          := osci-deshittifier-builder:1
 HOST_UID       := $(shell id -u)
 HOST_GID       := $(shell id -g)
 
+# Rootless podman maps container-root to the invoking user (no --user needed,
+# and passing one would land on a subuid that cannot write to the bind mount).
+# Real docker needs the explicit --user so artifacts don't come out root-owned.
+CONTAINER_USER := $(if $(findstring podman,$(OCI)),,--user $(HOST_UID):$(HOST_GID))
+
 # All the honoring of "keep everything in this directory" happens right here:
 # cargo caches, registry and (below) the maven local repo live under /work.
 IN_CONTAINER = $(OCI) run --rm \
-  --user $(HOST_UID):$(HOST_GID) \
+  $(CONTAINER_USER) \
   -e HOME=/work \
   -e CARGO_HOME=/work/.cargo-home \
   -e XDG_CACHE_HOME=/work/.cache \
