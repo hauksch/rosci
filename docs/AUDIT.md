@@ -52,26 +52,43 @@ Test inventory:
 | `osci-bridge` JUnit (17) | JSON contract, PKI parsing, sign/verify + decrypt round-trips, request loop |
 | `osci` unit/integration (29) | protocol serde, bridge lifecycle (timeout/garbage/death), client flows, DVDV resolution, XTA sniffing |
 | `osci-cli` (16) | argument plumbing, output shape, exit codes |
-| e2e (2) | the real binary + real jar + mock intermediary: full send/status/fetch dialogue, envelope contents, failure exit codes |
+| e2e (3) | the real binary + real jar + mock intermediary: plain-transport send/status/fetch; **transport-encrypted send + status with ciphertext assertions**; failure exit codes |
 
 The e2e suite generates its own throwaway PKI per run (`tests/gen-pki.sh`)
 and talks only to `127.0.0.1`. No test touches any external service; the
 Governikus public test intermediary is deliberately never used, because the
 mission leaves no online traces.
 
+### What the transport-encryption e2e actually proves
+
+The mock intermediary is a real cryptographic peer: it decrypts incoming
+transport packages with the intermediary key (RSA-OAEP key unwrap,
+AES-256-GCM — an AEAD tag failure would be loud), extracts the client's
+cipher certificate from the decrypted envelope, and encrypts every
+response back to it. The test then asserts on the byte-exact wire dumps:
+
+- raw requests carry `soapMessageEncrypted.xsd`/`EncryptedKey` markers and
+  contain **no** plaintext (not the subject, not the XTA payload, not even
+  the message-type element names like `storeDelivery`),
+- the mock's decrypted inner envelopes do contain subject and message
+  structure (decryption provably happened),
+- the XTA payload stays content-encrypted even *inside* the decrypted
+  transport envelope (layer two of the crypto onion),
+- responses are encrypted on the wire (the plaintext feedback text does
+  not appear in response dumps),
+- every exchange is recorded as `transport_encrypted: true` in per-request
+  meta files.
+
 ## Honest security notes
 
 An audit that only lists virtues is a brochure. Known limits, in the open:
 
-1. **`--insecure-transport` test mode.** The e2e suite runs with
-   SOAP-transport encryption and transport signatures disabled, because the
-   local mock intermediary cannot perform the challenge/certified-response
-   cryptography a real intermediary does. Content-level signing and content
-   encryption (CMS/XML-Enc to the recipient certificate) remain fully
-   active in these tests and are asserted (encrypted XTA bytes must NOT
-   appear in the envelope dump; plaintext mode must show them). The
-   production default is full transport encryption; the flag is named
-   honestly and documented as "only against endpoints you own".
+1. **Transport signatures on responses.** Transport *encryption* is fully
+   exercised bidirectionally (see above). Transport-level XML signatures,
+   however, are only exercised on the client's outgoing side; the mock's
+   responses are encrypted but unsigned, which the client's parser
+   accepts. `--insecure-transport` remains available for focused
+   content-level tests and is documented as test-only.
 2. **PIN handling.** PKCS#12 PINs travel as strings from flags/env/file
    into the bridge via stdio JSON. They are never written to disk or logs,
    and the bridge process lives exactly as long as the CLI — but they are
@@ -84,9 +101,10 @@ An audit that only lists virtues is a brochure. Known limits, in the open:
    online client; `resolve_dvdv` is already wired through it.
 4. **Mock intermediary coverage.** The mock speaks the happy path of
    Get­MessageId → StoreDelivery and InitDialog → Fetch/FetchProcessCard →
-   ExitDialog. It does not exercise intermediaries that reject, chunk, or
-   forward messages — those paths are covered by library code and the
-   library's own conformance, not ours.
+   ExitDialog, in both plain and transport-encrypted dialects. It does not
+   exercise intermediaries that reject, chunk, or forward messages — those
+   paths are covered by library code and the library's own conformance,
+   not ours.
 5. **Supply chain.** Maven artifacts are pinned by version and verified by
    committed per-artifact sha256s (`make manifest` regenerates,
    `make verify-deps` enforces). Rust is pinned by `Cargo.lock`. The

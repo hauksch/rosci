@@ -16,17 +16,29 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 /**
- * A mock OSCI-1.2 intermediary,localhost only, for the e2e suite.
+ * A mock OSCI-1.2 intermediary, localhost only, for the e2e suite.
  *
  * It implements the minimum dialogue the client library expects:
  * challenge echo, sequence numbers, feedback code 0 and fresh message ids.
- * The response envelopes are plain (unencrypted, unsigned) SOAP — exactly
- * enough structure for the client's parser, without a single line of
- * CMS cryptography on this side. If a real intermediary ever behaved
- * this laxly, someone should write a strongly worded letter.
  *
- * Usage: java -jar osci-mock.jar &lt;port&gt; [dumpDir]
+ * Two dialects, auto-detected per request:
+ * <ul>
+ *   <li><b>Plain</b> (client ran {@code --insecure-transport}): requests are
+ *       answered with plain SOAP envelopes.</li>
+ *   <li><b>Secure</b> (default): requests arrive as OSCI transport-encrypted
+ *       MIME packages. The mock decrypts them with the intermediary's
+ *       private key (see {@link TransportCrypto}), processes the inner
+ *       envelope, and encrypts the response to the client's cipher
+ *       certificate — a real cryptographic round trip, not a costume.</li>
+ * </ul>
+ *
+ * Usage: java -jar osci-mock.jar &lt;port&gt; [dumpDir] [--key intermed-cipher.key]
  * Prints "READY" on stdout once listening. Terminates on kill.
+ *
+ * Dumps, per request N (when dumpDir given):
+ * {@code request-N.xml} (raw bytes as received), {@code request-N.inner.xml}
+ * (decrypted inner envelope, secure mode only), {@code request-N.meta}
+ * ({@code transport_encrypted: true|false}).
  */
 public final class MockIntermediary
 {
@@ -37,18 +49,30 @@ public final class MockIntermediary
 
   private static final SecureRandom RANDOM = new SecureRandom();
   private static final AtomicInteger MESSAGE_IDS = new AtomicInteger(1);
+  private static final AtomicInteger REQUEST_COUNTER = new AtomicInteger(1);
 
   private static Path dumpDir = null;
+  private static TransportCrypto crypto = null;
+  private static final java.util.concurrent.atomic.AtomicReference<java.security.cert.X509Certificate>
+    LAST_CLIENT_CERT = new java.util.concurrent.atomic.AtomicReference<>();
 
   public static void main(String[] args) throws IOException
   {
     if (args.length < 1)
     {
-      System.err.println("usage: MockIntermediary <port> [dumpDir]");
+      System.err.println("usage: MockIntermediary <port> [dumpDir] [--key <pkcs8.pem>]");
       System.exit(2);
     }
     int port = Integer.parseInt(args[0]);
-    if (args.length > 1)
+    for (int i = 1 ; i < args.length - 1 ; i++)
+    {
+      if ("--key".equals(args[i]))
+      {
+        crypto = TransportCrypto.fromPkcs8Pem(Path.of(args[i + 1]));
+        System.err.println("mock: secure mode armed (intermediary key loaded)");
+      }
+    }
+    if (args.length > 1 && !args[1].startsWith("--"))
     {
       dumpDir = Path.of(args[1]);
       Files.createDirectories(dumpDir);
@@ -67,13 +91,46 @@ public final class MockIntermediary
     try
     {
       byte[] body = exchange.getRequestBody().readAllBytes();
+      // Lossy on purpose: only the ASCII XML part is inspected; the binary
+      // cipher part keeps its real bytes in `body`.
       String request = new String(body, StandardCharsets.UTF_8);
-      dump(request);
+      int n = REQUEST_COUNTER.getAndIncrement();
+      dump("request-" + n + ".xml", new String(body, StandardCharsets.ISO_8859_1));
 
-      String response = respondTo(request);
-      byte[] out = response.getBytes(StandardCharsets.UTF_8);
+      byte[] out;
+      if (TransportCrypto.isEncryptedTransport(request))
+      {
+        if (crypto == null)
+          throw new IOException("request is transport-encrypted but the mock was started without --key");
+        byte[] inner = crypto.decryptRequest(body);
+        dump("request-" + n + ".inner.xml", new String(inner, StandardCharsets.UTF_8));
+        writeMeta(n, true);
+        String innerXml = new String(inner, StandardCharsets.UTF_8);
+
+        // Not every message type advertises the originator's cipher
+        // certificate (initDialog, for one, keeps its pockets empty), so the
+        // mock remembers the last one it saw — the registration-table
+        // memory of a proper intermediary, minus the paperwork.
+        String certB64 = TransportCrypto.clientCipherCertB64(innerXml);
+        if (certB64 != null)
+          LAST_CLIENT_CERT.set(TransportCrypto.certFromB64(certB64));
+        java.security.cert.X509Certificate clientCipher = LAST_CLIENT_CERT.get();
+        if (clientCipher == null)
+          throw new IOException("no client cipher certificate seen yet "
+                                + "(first message of this client carried none)");
+
+        String plainResponse = respondTo(innerXml);
+        out = crypto.encryptResponse(plainResponse.getBytes(StandardCharsets.UTF_8), clientCipher);
+      }
+      else
+      {
+        writeMeta(n, false);
+        out = respondTo(request).getBytes(StandardCharsets.UTF_8);
+      }
+
       // The MIME headers (with the boundary) travel inside the body — the
       // client's MIMEParser reads them from the stream, not from HTTP.
+      dump("response-" + n + ".xml", new String(out, StandardCharsets.ISO_8859_1));
       exchange.getResponseHeaders().set("Content-Type", "Multipart/Related; type=text/xml");
       exchange.sendResponseHeaders(200, out.length);
       try (OutputStream os = exchange.getResponseBody())
@@ -94,18 +151,34 @@ public final class MockIntermediary
     }
   }
 
-  private static void dump(String request)
+  private static void writeMeta(int n, boolean encrypted)
   {
     if (dumpDir == null)
       return;
     try
     {
-      Path file = dumpDir.resolve("request-" + MESSAGE_IDS.get() + ".xml");
-      Files.writeString(file, request);
+      Files.writeString(dumpDir.resolve("request-" + n + ".meta"),
+                        "transport_encrypted: " + encrypted + "\n");
     }
     catch (IOException e)
     {
-      System.err.println("cannot dump request: " + e);
+      System.err.println("cannot write meta: " + e);
+    }
+  }
+
+  private static void dump(String name, String content)
+  {
+    if (dumpDir == null)
+      return;
+    try
+    {
+      // ISO-8859-1 chars map 1:1 to the bytes we derived them from; writing
+      // them as raw bytes keeps binary parts byte-exact for inspection.
+      Files.write(dumpDir.resolve(name), content.getBytes(StandardCharsets.ISO_8859_1));
+    }
+    catch (IOException e)
+    {
+      System.err.println("cannot dump " + name + ": " + e);
     }
   }
 

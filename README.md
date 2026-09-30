@@ -42,7 +42,7 @@ Everything builds inside a pinned container; the host stays Java-free
 ```sh
 make setup     # build the builder image, wire the no-push git hook
 make build     # Java bridge + mock jars, Rust workspace
-make test      # all 66 tests, incl. e2e against the local mock intermediary
+make test      # all 67 tests, incl. e2e against the local mock intermediary
 make lint      # rustfmt + clippy -D warnings + mvn verify
 make audit     # cargo-deny: licenses, advisories, crate sources
 make release   # dist/bin/rosci + dist/lib/osci-bridge.jar + SHA256SUMS
@@ -120,17 +120,21 @@ native online client when credentials-based lookup is acceptable.
 - `java/osci-bridge` — the sidecar: send / fetch / process-card ops,
   TLS-configurable transport, one JSON line at a time
   ([protocol spec](docs/PROTOCOL.md)).
-- `java/osci-mock` — a mock intermediary for the e2e suite; localhost
-  only, never shipped.
+- `java/osci-mock` — a mock intermediary that really performs the OSCI
+  transport crypto (RSA-OAEP key transport + AES-256-GCM, both
+  directions); localhost only, never shipped.
 
 ## Testing
 
-66 tests: Java unit (17), Rust unit/integration/CLI (45), e2e (2), doctests
-(2). The e2e suite runs the real binary + real jar against the mock intermediary with a
-per-run generated throwaway PKI — content encryption is asserted in both
-directions (ciphertext must not leak the XTA, plaintext mode must show
-it). No test ever leaves localhost. Details and the honest limitations
-list: [docs/AUDIT.md](docs/AUDIT.md).
+67 tests: Java unit (17), Rust unit/integration/CLI (45), e2e (3), doctests
+(2). The e2e suite runs the real binary + real jar against the mock
+intermediary with a per-run generated throwaway PKI. Transport encryption
+is asserted at the byte level: raw wire dumps must be ciphertext (no
+subject, no XTA payload, not even element names), the mock's decrypted
+inner envelopes must contain them, and responses must come back encrypted.
+Content encryption is asserted as a second layer on top. No test ever
+leaves localhost. Details and the honest limitations list:
+[docs/AUDIT.md](docs/AUDIT.md).
 
 ## Mission rules
 

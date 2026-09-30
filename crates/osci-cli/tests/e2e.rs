@@ -31,11 +31,18 @@ impl MockIntermediary {
             return None;
         }
         let port = free_port();
-        let mut child = Command::new(which_java().unwrap())
-            .arg("-jar")
+        let mut cmd = Command::new(which_java().unwrap());
+        cmd.arg("-jar")
             .arg(&jar)
             .arg(port.to_string())
-            .arg(dump_dir.to_str().unwrap())
+            .arg(dump_dir.to_str().unwrap());
+        // With the intermediary key on board, the mock can decrypt
+        // transport-encrypted requests and encrypt responses back.
+        let key = dump_dir.parent().map(|p| p.join("intermed-cipher.key"));
+        if let Some(key) = key.filter(|k| k.is_file()) {
+            cmd.arg("--key").arg(key);
+        }
+        let mut child = cmd
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
@@ -204,21 +211,22 @@ fn send_fetch_status_against_mock_intermediary() {
     // The mock dumped what actually crossed the wire: assert the store
     // delivery envelope carries the subject and the attachment reference —
     // and that the XTA itself is NOT plaintext (content encryption on).
+    // Dumps are byte-exact (binary content-attachment parts included), so
+    // everything is read lossily.
     let dump_dir = e2e.workdir.join("dump");
-    let store_envelope = std::fs::read_to_string(
-        dump_dir
+    let store_envelope = read_dump_lossy(
+        &dump_dir
             .read_dir()
             .expect("dump dir")
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .find(|p| {
-                std::fs::read_to_string(p)
-                    .map(|c| c.contains("storeDelivery"))
+                std::fs::read(p)
+                    .map(|c| String::from_utf8_lossy(&c).contains("storeDelivery"))
                     .unwrap_or(false)
             })
             .expect("store delivery dump"),
-    )
-    .unwrap();
+    );
     assert!(
         store_envelope.contains("e2e test sendung"),
         "subject must ride along"
@@ -260,6 +268,147 @@ fn send_fetch_status_against_mock_intermediary() {
         .stdout(predicate::str::contains("postbox empty").or(predicate::str::contains("message:")));
 }
 
+#[test]
+fn send_with_transport_encryption_against_mock_intermediary() {
+    let Some((e2e, _mock)) = E2e::setup() else {
+        return;
+    };
+    let dump_dir = e2e.workdir.join("dump");
+
+    // --- send WITHOUT --insecure-transport: full transport crypto --------
+    // The XTA carries a recognizable marker that must never appear in the
+    // raw packets, only inside the mock's decrypted inner envelopes.
+    std::fs::write(
+        e2e.workdir.join("geheim.xta"),
+        "<?xml version=\"1.0\"?><XTA><meldung>streng geheime transportdaten</meldung></XTA>",
+    )
+    .unwrap();
+
+    let output = e2e
+        .rosci()
+        .arg("send")
+        .arg("geheim.xta")
+        .args(["--to", "cert:recipient-cipher.pem"])
+        .args(["--intermediary", &_mock_url_from_dvdv(&e2e)])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--subject")
+        .arg("sichere sendung")
+        .arg("--json")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let receipt: serde_json::Value = serde_json::from_slice(&output).expect("parse receipt json");
+    let message_id = receipt["message_id"]
+        .as_str()
+        .expect("message id")
+        .to_string();
+    assert!(!message_id.is_empty(), "message id must not be empty");
+
+    // --- every request must have crossed the wire encrypted ---------------
+    let mut metas = 0;
+    for entry in std::fs::read_dir(&dump_dir).unwrap().filter_map(|e| e.ok()) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(n) = name
+            .strip_prefix("request-")
+            .and_then(|s| s.strip_suffix(".meta"))
+        {
+            let meta = std::fs::read_to_string(entry.path()).unwrap();
+            assert!(
+                meta.contains("transport_encrypted: true"),
+                "request {n} was not transport-encrypted: {meta}"
+            );
+            metas += 1;
+        }
+    }
+    assert!(metas >= 2, "expected at least 2 exchanges, saw {metas}");
+
+    // --- the raw packets are ciphertext, not costume jewelry --------------
+    // Find the storeDelivery exchange (getMessageId is N=1, storeDelivery N=2,
+    // but assert structurally instead of trusting the sequence).
+    let store_n = (1..=metas + 1).find(|n| {
+        std::fs::read(dump_dir.join(format!("request-{n}.inner.xml")))
+            .map(|b| {
+                let s = String::from_utf8_lossy(&b);
+                s.contains("storeDelivery")
+            })
+            .unwrap_or(false)
+    });
+    let Some(store_n) = store_n else {
+        panic!("no decrypted storeDelivery envelope found in dumps");
+    };
+
+    let raw = String::from_utf8_lossy(
+        &std::fs::read(dump_dir.join(format!("request-{store_n}.xml"))).unwrap(),
+    )
+    .into_owned();
+    assert!(
+        raw.contains("soapMessageEncrypted.xsd") && raw.contains("EncryptedKey"),
+        "raw request must carry the transport-encryption markers"
+    );
+    for marker in [
+        "sichere sendung",
+        "streng geheime transportdaten",
+        "storeDelivery",
+        "getMessageId",
+    ] {
+        assert!(
+            !raw.contains(marker),
+            "raw transport-encrypted request leaks plaintext: {marker}"
+        );
+    }
+
+    // --- ...and the mock really decrypted them ----------------------------
+    let inner = String::from_utf8_lossy(
+        &std::fs::read(dump_dir.join(format!("request-{store_n}.inner.xml"))).unwrap(),
+    )
+    .into_owned();
+    assert!(
+        inner.contains("storeDelivery"),
+        "decrypted envelope must show storeDelivery"
+    );
+    assert!(
+        inner.contains("sichere sendung"),
+        "decrypted envelope must show the subject"
+    );
+    // Content-level encryption still applies inside the transport envelope:
+    assert!(
+        !inner.contains("streng geheime transportdaten"),
+        "XTA content must be content-encrypted even inside the decrypted transport envelope"
+    );
+
+    // --- responses were encrypted too --------------------------------------
+    let response = String::from_utf8_lossy(
+        &std::fs::read(dump_dir.join(format!("response-{store_n}.xml"))).unwrap(),
+    )
+    .into_owned();
+    assert!(
+        response.contains("soapMessageEncrypted.xsd"),
+        "response must be transport-encrypted"
+    );
+    assert!(
+        !response.contains("die nachricht wurde entgegengenommen"),
+        "encrypted response must not leak the plaintext feedback text"
+    );
+
+    // --- status over the encrypted transport (multi-exchange dialogue) ----
+    e2e.rosci()
+        .arg("status")
+        .arg(&message_id)
+        .args(["--intermediary", &_mock_url_from_dvdv(&e2e)])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .success();
+}
+
 fn _mock_url_from_dvdv(e2e: &E2e) -> String {
     let dvdv: serde_json::Value =
         serde_json::from_slice(&std::fs::read(e2e.workdir.join("dvdv.json")).unwrap()).unwrap();
@@ -267,6 +416,12 @@ fn _mock_url_from_dvdv(e2e: &E2e) -> String {
         .as_str()
         .expect("url")
         .to_string()
+}
+
+/// Dumps are byte-exact — binary cipher parts make them invalid UTF-8,
+/// so tests always read them lossily.
+fn read_dump_lossy(path: &std::path::Path) -> String {
+    String::from_utf8_lossy(&std::fs::read(path).unwrap()).into_owned()
 }
 
 #[test]
