@@ -66,9 +66,12 @@ impl Xta {
 }
 
 /// Best-effort root element sniff: finds the first element tag in an XML
-/// document, skipping declarations, comments, PIs and doctypes. Returns
-/// `None` for anything that doesn't smell like XML.
+/// document, skipping declarations, comments, PIs, doctypes and a UTF-8
+/// BOM. Returns `None` for anything that doesn't smell like XML.
 pub fn sniff_root_element(data: &[u8]) -> Option<String> {
+    // A UTF-8 BOM is just the filing clerk's stamp on otherwise fine
+    // paperwork — not grounds for a "does not look like XML" warning.
+    let data = data.strip_prefix("\u{feff}".as_bytes()).unwrap_or(data);
     let text = String::from_utf8_lossy(data);
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -137,6 +140,19 @@ mod tests {
     fn sniffs_xta_root() {
         assert_eq!(
             sniff_root_element(b"<?xml version=\"1.0\"?>\n<XTA xmlns=\"x\">hi</XTA>"),
+            Some("XTA".to_string())
+        );
+    }
+
+    #[test]
+    fn skips_utf8_bom_without_complaining() {
+        // REVIEW.md A1: a BOM is a stamp, not a format error.
+        assert_eq!(
+            sniff_root_element("\u{feff}<XTA/>".as_bytes()),
+            Some("XTA".to_string())
+        );
+        assert_eq!(
+            sniff_root_element("\u{feff}<?xml version=\"1.0\"?><XTA/>".as_bytes()),
             Some("XTA".to_string())
         );
     }

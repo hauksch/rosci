@@ -496,10 +496,13 @@ fn cmd_dvdv(args: DvdvArgs) -> Result<(), Error> {
     } = args.cmd;
 
     let dir = FileDvdv::from_file(&file)?;
-    let entries: Vec<osci::DvdvEntry> = if all || org.is_none() {
+    let entries: Vec<osci::DvdvEntry> = if all {
         dir.all()
+    } else if let Some(org) = &org {
+        dir.find(org, category.as_deref())?
     } else {
-        dir.find(org.as_deref().expect("checked"), category.as_deref())?
+        // Silence is not a search criterion. Ask for something.
+        return Err(Error::Config("dvdv find needs --org or --all".into()));
     };
 
     if json {
@@ -614,5 +617,57 @@ fn sanitize_filename(name: &str) -> String {
         "unnamed.bin".into()
     } else {
         cleaned
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_filename_keeps_the_tame_and_tames_the_rest() {
+        assert_eq!(sanitize_filename("meldung.xta"), "meldung.xta");
+        assert_eq!(sanitize_filename("a-b_C.d"), "a-b_C.d");
+        // The classic directory-escape attempt, defanged:
+        assert_eq!(sanitize_filename("../../etc/passwd"), ".._.._etc_passwd");
+        assert_eq!(
+            sanitize_filename("../../../etc/passwd"),
+            ".._.._.._etc_passwd"
+        );
+        assert_eq!(
+            sanitize_filename("nachricht mit leerzeichen.xml"),
+            "nachricht_mit_leerzeichen.xml"
+        );
+        assert_eq!(sanitize_filename("böse ümlaute.txt"), "b_se__mlaute.txt");
+        assert_eq!(sanitize_filename(""), "unnamed.bin");
+        assert_eq!(sanitize_filename("///"), "___");
+    }
+
+    #[test]
+    fn parse_to_accepts_cert_and_dvdv_forms() {
+        assert!(
+            matches!(parse_to("cert:empfaenger.cer").unwrap(), ToSpec::Cert(p) if p.as_path() == std::path::Path::new("empfaenger.cer"))
+        );
+        assert!(matches!(
+            parse_to("dvdv:0241100012345").unwrap(),
+            ToSpec::Dvdv { org_key, category: None } if org_key == "0241100012345"
+        ));
+        assert!(matches!(
+            parse_to("dvdv:0241100012345:osci").unwrap(),
+            ToSpec::Dvdv { org_key, category: Some(cat) } if org_key == "0241100012345" && cat == "osci"
+        ));
+    }
+
+    #[test]
+    fn parse_to_rejects_garbage() {
+        for bad in ["telefon:040-123456", "cert:", "dvdv:", "dvdv::kat", "nix"] {
+            assert!(parse_to(bad).is_err(), "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn read_payload_missing_file_is_config_error() {
+        let err = read_payload("existiert-nicht.xta").unwrap_err();
+        assert!(matches!(err, Error::Config(ref c) if c.contains("cannot read XTA")));
     }
 }

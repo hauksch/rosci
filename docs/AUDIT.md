@@ -49,9 +49,9 @@ Test inventory:
 
 | suite | what it proves |
 |---|---|
-| `osci-bridge` JUnit (17) | JSON contract, PKI parsing, sign/verify + decrypt round-trips, request loop |
-| `osci` unit/integration (29) | protocol serde, bridge lifecycle (timeout/garbage/death), client flows, DVDV resolution, XTA sniffing |
-| `osci-cli` (16) | argument plumbing, output shape, exit codes |
+| `osci-bridge` JUnit (18) | JSON contract, PKI parsing, sign/verify + decrypt round-trips, request loop |
+| `osci` unit/integration (42) | protocol serde, bridge lifecycle (timeout/garbage/death), client flows, DVDV resolution, XTA sniffing |
+| `osci-cli` (20) | argument plumbing, output shape, exit codes |
 | e2e (3) | the real binary + real jar + mock intermediary: plain-transport send/status/fetch; **transport-encrypted send + status with ciphertext assertions**; failure exit codes |
 
 The e2e suite generates its own throwaway PKI per run (`tests/gen-pki.sh`)
@@ -92,8 +92,11 @@ An audit that only lists virtues is a brochure. Known limits, in the open:
 2. **PIN handling.** PKCS#12 PINs travel as strings from flags/env/file
    into the bridge via stdio JSON. They are never written to disk or logs,
    and the bridge process lives exactly as long as the CLI — but they are
-   not zeroized memory. If your threat model includes core dumps, file a
-   feature request (or a patch; patches age better than requests).
+   not zeroized memory, and PINs supplied via environment variables are
+   readable from `/proc/<pid>/environ` by the same user for the lifetime
+   of the process. If your threat model includes core dumps or process
+   introspection, file a feature request (or a patch; patches age better
+   than requests).
 3. **DVDV is file-based.** Recipient resolution uses a local JSON extract
    (`--dvdv-file`, `rosci dvdv find`) rather than the online FITKO REST
    service, which requires OAuth client credentials and would leave

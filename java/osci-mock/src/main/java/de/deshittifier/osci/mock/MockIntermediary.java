@@ -47,6 +47,12 @@ public final class MockIntermediary
   private static final String XSD_ENC_SIG =
     "http://www.w3.org/2000/09/xmldsig# oscisig.xsd http://www.w3.org/2001/04/xmlenc# oscienc.xsd";
 
+  /** Canned postbox content, served on every fetchDelivery. */
+  private static final String FETCH_ATTACHMENT_ID = "mock-antwort.xta";
+  private static final String FETCH_ATTACHMENT_BODY =
+    "<?xml version=\"1.0\"?><XTA><antwort>die behoerde dankt fuer die nachricht"
+    + " und wird sich melden. vermutlich per fax.</antwort></XTA>";
+
   private static final SecureRandom RANDOM = new SecureRandom();
   private static final AtomicInteger MESSAGE_IDS = new AtomicInteger(1);
   private static final AtomicInteger REQUEST_COUNTER = new AtomicInteger(1);
@@ -203,6 +209,8 @@ public final class MockIntermediary
     String xsd;
     String headerExtras = "";
     String bodyContent = "";
+    String extraPartId = null;
+    String extraPartContent = null;
     switch (type)
     {
       case "getMessageId":
@@ -236,20 +244,43 @@ public final class MockIntermediary
         bodyContent = bodyElement("responseToExitDialog", "", FEEDBACK);
         break;
       case "fetchDelivery":
-        // Header layout, empty postbox: feedback only, no content package.
+      {
+        // Header layout, and a canned message in the postbox: one content
+        // package whose Content references an attachment MIME part — the
+        // exact shape a real fetch delivers (and the path the bridge's
+        // attachment handling is never otherwise exercised by).
         xsd = "soapResponseToFetchDelivery.xsd";
         headerExtras = bodyElement("responseToFetchDelivery", " Id=\"rsp-1\"", FEEDBACK);
+        bodyContent = "  <osci:ContentPackage><osci:ContentContainer Id=\"mock-cc-1\">"
+                      + "<osci:Content Id=\"mock-c-1\" href=\"cid:" + FETCH_ATTACHMENT_ID
+                      + "\"></osci:Content></osci:ContentContainer></osci:ContentPackage>";
+        extraPartId = FETCH_ATTACHMENT_ID;
+        extraPartContent = FETCH_ATTACHMENT_BODY;
         break;
+      }
       case "fetchProcessCard":
-        // No Laufzettel on file. The honest bureaucracy: nothing happened.
+      {
+        // A canned but honest Laufzettel: one card for the requested
+        // message id, with a plain creation timestamp and a subject.
         xsd = "soapResponseToFetchProcessCard.xsd";
-        bodyContent = bodyElement("responseToFetchProcessCard", "", FEEDBACK);
+        String msgId = element(request, "MessageId");
+        if (msgId == null)
+          msgId = b64("mock-msgid-unknown");
+        bodyContent = bodyElement(
+            "responseToFetchProcessCard", "", FEEDBACK
+            + "<osci:ProcessCardBundle><osci:ProcessCard><osci:MessageId>"
+            + msgId + "</osci:MessageId><osci:Creation><osci:Plain>"
+            + "2026-09-30T08:15:00Z" + "</osci:Plain></osci:Creation>"
+            + "<osci:Subject>mock laufzettel: alles seinen gang gegangen</osci:Subject>"
+            + "</osci:ProcessCard></osci:ProcessCardBundle>");
         break;
+      }
       default:
         throw new IllegalArgumentException("mock does not know this request type: " + type);
     }
 
-    return envelope(bodyContent, headerExtras, xsd, seqAttr, conversationId, echoedChallenge);
+    return envelope(bodyContent, headerExtras, xsd, seqAttr, conversationId, echoedChallenge,
+                    extraPartId, extraPartContent);
   }
 
   private static String detectType(String request)
@@ -271,7 +302,8 @@ public final class MockIntermediary
     + "</osci:Entry></osci:Feedback>";
 
   private static String envelope(String bodyContent, String headerExtras, String xsdName,
-                                 String seqAttr, String conversationId, String echoedChallenge)
+                                 String seqAttr, String conversationId, String echoedChallenge,
+                                 String extraPartId, String extraPartContent)
   {
     String freshChallenge = b64("challenge-" + RANDOM.nextInt(1_000_000));
     String responseElement = (echoedChallenge == null || echoedChallenge.isBlank())
@@ -300,7 +332,8 @@ public final class MockIntermediary
 
     // The client's response parser insists on full MIME framing — headers,
     // boundary, part headers, exact Content-Length. The request dump is the
-    // blueprint; we speak the dialect the library itself speaks.
+    // blueprint; we speak the dialect the library itself speaks. Fetched
+    // attachments ride as additional parts after the envelope.
     String boundary = "MIME_boundary_mock_" + Long.toHexString(RANDOM.nextLong());
     byte[] xmlBytes = xml.getBytes(StandardCharsets.UTF_8);
     return "MIME-Version: 1.0\r\n"
@@ -313,7 +346,21 @@ public final class MockIntermediary
            + "Content-Length: " + xmlBytes.length + "\r\n"
            + "\r\n"
            + xml + "\r\n"
+           + attachmentPart(boundary, extraPartId, extraPartContent)
            + "--" + boundary + "--\r\n";
+  }
+
+  /** Renders the attachment MIME part for fetched content, or nothing. */
+  private static String attachmentPart(String boundary, String partId, String content)
+  {
+    if (partId == null)
+      return "";
+    return "--" + boundary + "\r\n"
+           + "Content-Type: application/octet-stream\r\n"
+           + "Content-Transfer-Encoding: binary\r\n"
+           + "Content-ID: <" + partId + ">\r\n"
+           + "\r\n"
+           + content + "\r\n";
   }
 
   /** A response element with optional extra attributes and inner XML. */

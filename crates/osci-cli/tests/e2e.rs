@@ -240,7 +240,7 @@ fn send_fetch_status_against_mock_intermediary() {
         "XTA content must be encrypted, not plaintext"
     );
 
-    // --- status (process card / Laufzettel) ------------------------------
+    // --- status (process card / Laufzettel, now with real content) --------
     e2e.rosci()
         .arg("status")
         .arg(&message_id)
@@ -251,9 +251,15 @@ fn send_fetch_status_against_mock_intermediary() {
         .arg("--insecure-transport")
         .timeout(Duration::from_secs(180))
         .assert()
-        .success();
+        .success()
+        .stdout(
+            predicate::str::contains("mock laufzettel")
+                .and(predicate::str::contains("2026-09-30T08:15:00Z"))
+                .and(predicate::str::contains(&message_id)),
+        );
 
-    // --- fetch (empty postbox is a success) -------------------------------
+    // --- fetch: the mock serves one canned message with an attachment ----
+    let fetched_dir = e2e.workdir.join("fetched");
     e2e.rosci()
         .arg("fetch")
         .arg("--all")
@@ -261,11 +267,56 @@ fn send_fetch_status_against_mock_intermediary() {
         .args(["--intermediary-cert", "intermed-cipher.pem"])
         .args(["--cert", "client-sign.p12"])
         .args(["--decrypter-cert", "client-cipher.p12"])
+        .args(["--out", fetched_dir.to_str().unwrap()])
         .arg("--insecure-transport")
         .timeout(Duration::from_secs(180))
         .assert()
         .success()
-        .stdout(predicate::str::contains("postbox empty").or(predicate::str::contains("message:")));
+        .stdout(predicate::str::contains("wrote"));
+
+    // The attachment landed on disk, byte-honest.
+    let fetched = std::fs::read(fetched_dir.join("mock-antwort.xta")).expect("fetched attachment");
+    let fetched = String::from_utf8_lossy(&fetched);
+    assert!(
+        fetched.contains("die behoerde dankt"),
+        "fetched XTA must carry the canned payload: {fetched}"
+    );
+    assert!(fetched.contains("<XTA"), "fetched XTA must be XML");
+
+    // --- fetch --json: machine-readable shape with base64 content ---------
+    let json_out = e2e
+        .rosci()
+        .arg("fetch")
+        .arg("--all")
+        .args(["--intermediary", &_mock_url_from_dvdv(&e2e)])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--json")
+        .arg("--insecure-transport")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let messages: serde_json::Value = serde_json::from_slice(&json_out).expect("fetch json");
+    let contents = messages[0]["contents"].as_array().expect("contents");
+    assert!(
+        !contents.is_empty(),
+        "fetch json must carry content entries"
+    );
+    assert_eq!(
+        contents[0]["filename"].as_str(),
+        Some("mock-antwort.xta"),
+        "attachment ref must map to the filename"
+    );
+    let data = contents[0]["data"].as_str().expect("base64 data");
+    use base64::Engine as _;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .expect("valid base64");
+    assert!(String::from_utf8_lossy(&decoded).contains("die behoerde dankt"));
 }
 
 #[test]
@@ -397,6 +448,8 @@ fn send_with_transport_encryption_against_mock_intermediary() {
     );
 
     // --- status over the encrypted transport (multi-exchange dialogue) ----
+    // The canned Laufzettel must survive the encrypted pipe intact: the
+    // client decrypted the response AND mapped the process card fields.
     e2e.rosci()
         .arg("status")
         .arg(&message_id)
@@ -406,7 +459,11 @@ fn send_with_transport_encryption_against_mock_intermediary() {
         .args(["--decrypter-cert", "client-cipher.p12"])
         .timeout(Duration::from_secs(180))
         .assert()
-        .success();
+        .success()
+        .stdout(
+            predicate::str::contains("mock laufzettel")
+                .and(predicate::str::contains("2026-09-30T08:15:00Z")),
+        );
 }
 
 fn _mock_url_from_dvdv(e2e: &E2e) -> String {

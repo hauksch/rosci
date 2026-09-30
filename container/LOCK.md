@@ -1,6 +1,6 @@
 # Build environment lock
 
-Recorded: 2026-09-29 (via `make lock-info`)
+Recorded: 2026-09-30 (via `make lock-info`)
 
 | Component   | Version / pin                                                              |
 |-------------|----------------------------------------------------------------------------|
@@ -15,12 +15,12 @@ Recorded: 2026-09-29 (via `make lock-info`)
 Builder image (locally built, tag `osci-deshittifier-builder:1`):
 
 ```
-localhost/osci-deshittifier-builder@sha256:5285f6420fefe9b6ac90d5266800ab5231023f04db173424971739a238875f52
+localhost/osci-deshittifier-builder@sha256:377ff2d02dc24a251f0bdb5723b87e6c5c356c2537dd63db4ab5afac94eb9a17
 ```
 
-(Note: the image digest above was recorded before the cargo-deny addition;
-re-record with `make lock-info` after the next clean `make image` if you
-need an exact digest — or trust the Dockerfile, which pins every input.)
+(The digest identifies the locally built image including the pinned
+cargo-deny addition; the Dockerfile pins every input, which is the
+durable guarantee — the digest is the convenience.)
 
 ## Java dependency pins (see `java/osci-bridge/pom.xml`)
 

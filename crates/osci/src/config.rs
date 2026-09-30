@@ -114,3 +114,54 @@ impl Tls {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trust_anchor_file_is_read_into_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let pem = dir.path().join("ca.pem");
+        std::fs::write(
+            &pem,
+            "-----BEGIN CERTIFICATE-----\nZm9v\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        let tls = Tls::default().with_trust_anchor_file(&pem).unwrap();
+        assert_eq!(tls.trust_anchors.len(), 1);
+        assert!(tls.trust_anchors[0].contains("BEGIN CERTIFICATE"));
+    }
+
+    #[test]
+    fn trust_anchor_missing_file_is_a_config_error() {
+        let err = Tls::default()
+            .with_trust_anchor_file(std::path::Path::new("/gibt-es-nicht/ca.pem"))
+            .unwrap_err();
+        assert!(matches!(err, Error::Config(ref c) if c.contains("cannot read")));
+    }
+
+    #[test]
+    fn identity_missing_p12_is_a_config_error() {
+        let err = Identity::from_p12_files(
+            std::path::Path::new("/kein/p12/hier.p12"),
+            "123456",
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Config(ref c) if c.contains("cannot read")));
+    }
+
+    #[test]
+    fn tls_msg_omits_empty_trust_anchors() {
+        let msg = Tls::default().to_msg();
+        assert!(msg.trust_anchors.is_none());
+        let msg = Tls {
+            trust_anchors: vec!["CERT".into()],
+            ..Tls::default()
+        }
+        .to_msg();
+        assert_eq!(msg.trust_anchors.unwrap(), vec!["CERT".to_string()]);
+    }
+}

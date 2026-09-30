@@ -13,7 +13,7 @@ public final class BridgeException extends RuntimeException
   public static final String INTERNAL = "internal";
 
   public final String kind;
-  public final transient String[][] feedback;
+  public final String[][] feedback;
 
   public BridgeException(String kind, String message)
   {

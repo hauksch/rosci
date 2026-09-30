@@ -83,7 +83,9 @@ public final class BridgeTransport implements TransportI
   @Override
   public long getContentLength()
   {
-    return con.getContentLengthLong();
+    // Defensive: the library only calls this after a connection exists,
+    // but an NPE from a transport is a lousy way to find out otherwise.
+    return (con == null) ? -1 : con.getContentLengthLong();
   }
 
   @Override

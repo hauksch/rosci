@@ -113,7 +113,7 @@ git-guard: ## Fail if this repository ever grows a remote (mission rule: no trac
 
 .PHONY: lock-info
 lock-info: image ## Print exact tool versions + digests for container/LOCK.md
-	@bash container/record-lock.sh $(IMAGE)
+	@OCI=$(OCI) bash container/record-lock.sh $(IMAGE)
 
 .PHONY: shell
 shell: image ## Drop into an interactive shell in the builder container

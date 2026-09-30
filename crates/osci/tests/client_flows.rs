@@ -147,3 +147,63 @@ fn drop_shuts_the_fake_bridge_down() {
     // would be waiting for input forever; the process list stays clean.
     std::io::stdout().flush().ok();
 }
+
+#[test]
+fn dvdv_all_is_sorted_and_ambiguity_is_an_error() {
+    let dir = FileDvdv::from_entries(vec![
+        DvdvEntry {
+            org_key: "00002".into(),
+            name: "Zweitamt".into(),
+            category: None,
+            intermediary_url: "https://ks/2".into(),
+            intermediary_cipher_cert: "C".into(),
+            recipient_cipher_cert: "C".into(),
+        },
+        DvdvEntry {
+            org_key: "00001".into(),
+            name: "Erstamt".into(),
+            category: None,
+            intermediary_url: "https://ks/1".into(),
+            intermediary_cipher_cert: "C".into(),
+            recipient_cipher_cert: "C".into(),
+        },
+        DvdvEntry {
+            org_key: "00001".into(),
+            name: "Erstamt, zweite Stelle".into(),
+            category: Some("egvp".into()),
+            intermediary_url: "https://ks/1b".into(),
+            intermediary_cipher_cert: "C".into(),
+            recipient_cipher_cert: "C".into(),
+        },
+    ]);
+
+    let all = dir.all();
+    let keys: Vec<&str> = all.iter().map(|e| e.org_key.as_str()).collect();
+    assert_eq!(
+        keys,
+        vec!["00001", "00001", "00002"],
+        "all() must be sorted by org key"
+    );
+
+    // Two entries, no category → ambiguous, and the error must say so.
+    let err = osci::resolve_dvdv(&dir, "00001", None).unwrap_err();
+    assert!(matches!(err, Error::DvdvLookup(ref m) if m.contains("ambiguous")));
+
+    // The category disambiguates.
+    let (intermediary, _) = osci::resolve_dvdv(&dir, "00001", Some("egvp")).unwrap();
+    assert_eq!(intermediary.url, "https://ks/1b");
+}
+
+#[test]
+fn receipt_serializes_stable_json() {
+    use osci::Receipt;
+    let receipt = Receipt {
+        message_id: "mock-4711".into(),
+        feedback: Some(vec![vec!["alles gut".into(), "0000".into()]]),
+    };
+    let json = serde_json::to_string(&receipt).unwrap();
+    assert!(json.contains("\"message_id\":\"mock-4711\""));
+    assert!(json.contains("0000"));
+    let back: Receipt = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.message_id, "mock-4711");
+}

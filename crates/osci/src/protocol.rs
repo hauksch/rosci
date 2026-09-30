@@ -135,7 +135,7 @@ pub struct ErrorMsg {
 // ---------------------------------------------------------------- public DTOs
 
 /// A successfully submitted message.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Receipt {
     /// OSCI message id handed out by the intermediary. Quote this in any
     /// follow-up correspondence; it is the Aktenzeichen of your message.

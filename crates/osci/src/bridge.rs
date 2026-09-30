@@ -173,7 +173,10 @@ impl BridgeHandle {
         Ok(rsp)
     }
 
-    /// Sends the shutdown request (ignores the response).
+    /// Sends the shutdown request and waits briefly for the goodbye. Uses a
+    /// short fixed timeout, deliberately NOT `response_timeout`: a goodbye
+    /// that takes minutes is not a goodbye, and `Drop` must never block on
+    /// an unresponsive JVM (see docs/REVIEW.md, finding A2).
     pub fn shutdown(&mut self) {
         let req = Request {
             id: "shutdown".into(),
@@ -190,8 +193,31 @@ impl BridgeHandle {
             selection_mode: None,
             selection_rule: None,
         };
-        if let Err(e) = self.call(req) {
-            debug!("bridge shutdown handshake failed (fine): {e}");
+        let json = match serde_json::to_string(&req) {
+            Ok(json) => json,
+            Err(e) => {
+                debug!("cannot serialize shutdown request: {e}");
+                return;
+            }
+        };
+        if let Err(e) = self
+            .stdin
+            .write_all(json.as_bytes())
+            .and_then(|_| self.stdin.write_all(b"\n"))
+            .and_then(|_| self.stdin.flush())
+        {
+            debug!("bridge closed its stdin before shutdown: {e}");
+            return;
+        }
+        // Two seconds of politeness, then Drop's kill-grace takes over.
+        match self.lines.recv_timeout(Duration::from_secs(2)) {
+            Ok(_) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                debug!("bridge did not answer shutdown in time; Drop will handle it")
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                debug!("bridge exited on shutdown")
+            }
         }
     }
 

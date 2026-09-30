@@ -175,3 +175,76 @@ fn spawn_failure_for_missing_binary() {
     let err = BridgeHandle::spawn(&BridgeConfig::cmd(["/nonexistent/bridge-bin"])).unwrap_err();
     assert!(matches!(err, Error::BridgeSpawn(_)), "got: {err:?}");
 }
+
+#[test]
+fn response_id_mismatch_is_a_desync_error() {
+    let dir = tempfile::tempdir().unwrap();
+    // Answers with a id that was never asked for — a desynchronized or
+    // hallucinating bridge must be caught, not silently consumed.
+    let script = write_script(
+        &dir,
+        "wrong_id.sh",
+        "read -r line; echo '{\"id\":\"r999\",\"op\":\"ping\",\"ok\":true,\"result\":{\"versions\":{}}}'\n",
+    );
+    let mut bridge =
+        BridgeHandle::spawn(&BridgeConfig::cmd(["bash", script.to_str().unwrap()])).unwrap();
+    let err = bridge.call(request("ping")).unwrap_err();
+    match err {
+        Error::BridgeProtocol(ref msg) => assert!(msg.contains("id mismatch"), "got: {msg}"),
+        other => panic!("expected BridgeProtocol, got {other:?}"),
+    }
+}
+
+#[test]
+fn drop_does_not_wait_for_a_rude_bridge() {
+    let dir = tempfile::tempdir().unwrap();
+    // Pings politely, then stonewalls on shutdown: reads the line and
+    // sleeps forever without answering. Drop must still return fast
+    // (REVIEW.md A2: goodbye timeout is fixed, not response_timeout).
+    let script = write_script(
+        &dir,
+        "rude.sh",
+        r#"
+while IFS= read -r line; do
+  case "$line" in
+    *'"ping"'*) echo '{"ok":true,"result":{"versions":{"bridge":"rude"}}}' ;;
+    *) sleep 600 ;;
+  esac
+done
+"#,
+    );
+    let cfg = BridgeConfig::cmd(["bash", script.to_str().unwrap()])
+        .response_timeout(Duration::from_secs(120));
+    let start = std::time::Instant::now();
+    {
+        let mut bridge = BridgeHandle::spawn(&cfg).unwrap();
+        let rsp = bridge.call(request("ping")).unwrap();
+        assert!(rsp.ok);
+    } // Drop: must kill the stonewaller within seconds, not minutes.
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(30),
+        "Drop blocked for {elapsed:?} — the rude bridge was kept waiting on"
+    );
+}
+
+#[test]
+fn java_jar_honors_java_opts_env() {
+    // Serial env usage: no other test in this binary constructs java_jar().
+    std::env::set_var("OSCI_JAVA_OPTS", "-Xmx16m -Dprobe=1");
+    let cfg = BridgeConfig::java_jar("/some/where/osci-bridge.jar");
+    std::env::remove_var("OSCI_JAVA_OPTS");
+    assert_eq!(
+        cfg.cmd,
+        vec![
+            "java".to_string(),
+            "-Xmx16m".to_string(),
+            "-Dprobe=1".to_string(),
+            "-jar".to_string(),
+            "/some/where/osci-bridge.jar".to_string(),
+        ]
+    );
+
+    let cfg = BridgeConfig::java_jar("/some/where/osci-bridge.jar");
+    assert_eq!(cfg.cmd, vec!["java", "-jar", "/some/where/osci-bridge.jar"]);
+}

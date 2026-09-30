@@ -82,4 +82,21 @@ class ProtocolTest
     assertFalse(json.contains("message_id"));
     assertFalse(json.contains("feedback"));
   }
+
+  @Test
+  void insecureTransportRoundTripsBothWays()
+  {
+    // The test-mode field must survive the trip and default to secure
+    // (null) when absent — a silent default flip would be exactly the kind
+    // of schema drift this protocol exists to prevent.
+    String json = "{\"id\":\"7\",\"op\":\"send\",\"insecure_transport\":false}";
+    Protocol.Request req = gson.fromJson(json, Protocol.Request.class);
+    assertEquals(Boolean.FALSE, req.insecure_transport);
+
+    String absent = "{\"id\":\"8\",\"op\":\"send\"}";
+    assertNull(gson.fromJson(absent, Protocol.Request.class).insecure_transport);
+
+    String serialized = gson.toJson(req);
+    assertTrue(serialized.contains("\"insecure_transport\":false"));
+  }
 }

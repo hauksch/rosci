@@ -42,7 +42,7 @@ taken (fixed now / left open with rationale).
 | # | Where | Issue | Severity | Decision |
 |---|---|---|---|---|
 | D1 | `docs/AUDIT.md` — PIN handling | Documents stdio travel of PINs but not exposure via process environment (`/proc/*/environ` for env-var PINs) | low | **fixed** (note added) |
-| D2 | `docs/PROTOCOL.md` | The sample request JSON omits the `insecure_transport` field (it is in the field table) | trivial | **fixed** (sample updated) |
+| D2 | `docs/PROTOCOL.md` | Claimed: sample request JSON omits `insecure_transport` — **false alarm**, the sample already carries it (reviewer read the table, not the sample) | — | closed as invalid |
 | D3 | this file | The review list itself must live in the repo and be kept honest | — | created |
 
 ## E. Test coverage gaps (worklist for the coverage pass)
@@ -70,3 +70,13 @@ tests, error paths mapped to exit codes, and the crypto paths are pinned
 by the e2e ciphertext assertions. Everything above is polish, robustness,
 or coverage — which is exactly where a project should be after its first
 audit cycle. The bureaucracy would call this "reif für die Abnahme".
+
+## Coverage pass result (2026-09-30)
+
+All E-items addressed: 18 new tests (Rust 22→42 unit/integration incl. 4
+new CLI unit tests and 3 bridge-lifecycle tests; Java +1 protocol test),
+the mock now serves a canned ContentPackage with attachment on
+fetchDelivery and a canned ProcessCardBundle on fetchProcessCard, and the
+e2e suite asserts the fetched XTA byte-for-byte on disk, the `--json`
+shape, and the Laufzettel fields through both plain and encrypted pipes.
+Total: 67 → 85 tests, `make lint test audit` green.

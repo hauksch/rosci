@@ -371,7 +371,58 @@ fn base_request(op: &'static str) -> Request {
 /// `../lib/osci-bridge.jar` (see `make release`). Overridable via
 /// `OSCI_BRIDGE_JAR`, because environments are a fact of life.
 fn default_jar_path() -> std::path::PathBuf {
-    std::env::var_os("OSCI_BRIDGE_JAR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("osci-bridge.jar"))
+    let env = std::env::var_os("OSCI_BRIDGE_JAR");
+    let exe = std::env::current_exe().ok();
+    resolve_jar_path(env.as_deref(), exe.as_deref())
+}
+
+/// Pure core of [`default_jar_path`]: env override wins, then the
+/// exe-relative release layout, then a cwd-relative fallback.
+fn resolve_jar_path(
+    env: Option<&std::ffi::OsStr>,
+    exe: Option<&std::path::Path>,
+) -> std::path::PathBuf {
+    if let Some(env) = env {
+        return std::path::PathBuf::from(env);
+    }
+    let release = exe
+        .and_then(|e| e.parent())
+        .map(|dir| dir.join("../lib/osci-bridge.jar"))
+        .filter(|p| p.is_file());
+    if let Some(jar) = release {
+        return jar;
+    }
+    std::path::PathBuf::from("osci-bridge.jar")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_jar_path;
+    use std::path::Path;
+
+    #[test]
+    fn env_override_wins_over_everything() {
+        let p = resolve_jar_path(
+            Some("/custom/bridge.jar".as_ref()),
+            Some(Path::new("/opt/dist/bin/rosci")),
+        );
+        assert_eq!(p, Path::new("/custom/bridge.jar"));
+    }
+
+    #[test]
+    fn release_layout_is_found_next_to_the_binary() {
+        // dist/bin/rosci -> dist/lib/osci-bridge.jar
+        let dist = tempfile::tempdir().unwrap();
+        let bin = dist.path().join("bin");
+        std::fs::create_dir_all(bin.join("../lib")).unwrap();
+        std::fs::write(bin.join("../lib/osci-bridge.jar"), b"jar").unwrap();
+        let p = resolve_jar_path(None, Some(&bin.join("rosci")));
+        assert_eq!(p, bin.join("../lib/osci-bridge.jar"));
+    }
+
+    #[test]
+    fn falls_back_to_cwd_relative_when_layout_is_absent() {
+        let p = resolve_jar_path(None, Some(Path::new("/nowhere/bin/rosci")));
+        assert_eq!(p, Path::new("osci-bridge.jar"));
+    }
 }

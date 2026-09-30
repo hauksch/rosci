@@ -42,7 +42,7 @@ Everything builds inside a pinned container; the host stays Java-free
 ```sh
 make setup     # build the builder image, wire the no-push git hook
 make build     # Java bridge + mock jars, Rust workspace
-make test      # all 67 tests, incl. e2e against the local mock intermediary
+make test      # all 85 tests, incl. e2e against the local mock intermediary
 make lint      # rustfmt + clippy -D warnings + mvn verify
 make audit     # cargo-deny: licenses, advisories, crate sources
 make release   # dist/bin/rosci + dist/lib/osci-bridge.jar + SHA256SUMS
@@ -126,7 +126,7 @@ native online client when credentials-based lookup is acceptable.
 
 ## Testing
 
-67 tests: Java unit (17), Rust unit/integration/CLI (45), e2e (3), doctests
+85 tests: Java unit (18), Rust unit/integration/CLI (62), e2e (3), doctests
 (2). The e2e suite runs the real binary + real jar against the mock
 intermediary with a per-run generated throwaway PKI. Transport encryption
 is asserted at the byte level: raw wire dumps must be ciphertext (no
