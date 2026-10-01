@@ -671,3 +671,23 @@ mod tests {
         assert!(matches!(err, Error::Config(ref c) if c.contains("cannot read XTA")));
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::sanitize_filename;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// The sanitizer must be idempotent: a second pass never changes
+        /// anything, and the result always lives in the safe alphabet.
+        #[test]
+        fn sanitize_is_idempotent_and_closed(name in "\\PC{0,64}") {
+            let once = sanitize_filename(&name);
+            let twice = sanitize_filename(&once);
+            prop_assert_eq!(&once, &twice);
+            prop_assert!(!once.is_empty());
+            prop_assert!(once.chars().all(|c|
+                c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')));
+        }
+    }
+}

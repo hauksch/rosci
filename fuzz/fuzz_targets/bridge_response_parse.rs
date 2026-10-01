@@ -1,0 +1,13 @@
+//! Fuzz target: the bridge reader parses untrusted stdout lines into
+//! `protocol::Response`. Malformed input must produce an error, never a
+//! panic. Run via `make fuzz`.
+
+#![no_main]
+
+use libfuzzer_sys::fuzz_target;
+
+fuzz_target!(|data: &[u8]| {
+    if let Ok(s) = std::str::from_utf8(data) {
+        let _ = serde_json::from_str::<osci::protocol::Response>(s);
+    }
+});

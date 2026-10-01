@@ -30,3 +30,6 @@ java/**/dependency-reduced-pom.xml
 .vscode/
 *.iml
 .DS_Store
+
+# coverage artifacts
+/coverage/

@@ -77,6 +77,45 @@ lint: image ## Rustfmt + clippy -D warnings + maven verify
 audit: image ## cargo-deny: licenses, advisories, crate sources
 	$(IN_CONTAINER) cargo deny --config deny.toml check --hide-inclusion-graph licenses advisories sources
 
+JACOCO_VERSION := 0.8.13
+JACOCO_ZIP_SHA256 := 96586427ed734138ca4867ca2ceeb70c27e856a113638ea41709ec0734147c60
+
+.PHONY: coverage
+coverage: image ## Measured coverage: cargo-llvm-cov (Rust) + JaCoCo (Java bridge, unit + e2e)
+	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml verify
+	@echo "--- Java bridge, unit tests (JaCoCo) ---"
+	$(IN_CONTAINER) bash container/jacoco-summary.sh java/osci-bridge/target/site/jacoco/jacoco.csv
+	$(IN_CONTAINER) bash -c '\
+	  mkdir -p coverage .deps/jacoco \
+	  && curl -fsSL -o .deps/jacoco/jacoco.zip \
+	       https://github.com/jacoco/jacoco/releases/download/v$(JACOCO_VERSION)/jacoco-$(JACOCO_VERSION).zip \
+	  && sha256sum .deps/jacoco/jacoco.zip | grep -q $(JACOCO_ZIP_SHA256) \
+	     || { echo "jacoco zip checksum mismatch"; exit 1; } \
+	  && unzip -joq .deps/jacoco/jacoco.zip lib/jacocoagent.jar lib/jacococli.jar -d .deps/jacoco'
+	@echo "--- Java bridge, e2e (real jar, JaCoCo agent via OSCI_JAVA_OPTS) ---"
+	$(IN_CONTAINER) bash -c '\
+	  rm -f coverage/bridge-e2e.exec \
+	  && OSCI_JAVA_OPTS="-javaagent:/work/.deps/jacoco/jacocoagent.jar=output=file,destfile=/work/coverage/bridge-e2e.exec,append=true" \
+	     cargo test -p osci-cli --test e2e >/dev/null 2>&1 || true; \
+	  test -f coverage/bridge-e2e.exec || { echo "no e2e execution data"; exit 1; }'
+	$(IN_CONTAINER) java -jar .deps/jacoco/jacococli.jar merge \
+	  java/osci-bridge/target/jacoco.exec coverage/bridge-e2e.exec \
+	  --destfile coverage/bridge-combined.exec >/dev/null
+	$(IN_CONTAINER) java -jar .deps/jacoco/jacococli.jar report coverage/bridge-combined.exec \
+	  --classfiles java/osci-bridge/target/classes --csv coverage/bridge-combined.csv >/dev/null
+	@echo "--- Java bridge, unit + e2e combined ---"
+	$(IN_CONTAINER) bash container/jacoco-summary.sh coverage/bridge-combined.csv
+	$(IN_CONTAINER) bash -c 'mkdir -p coverage && cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info'
+	@echo "Rust lcov report: coverage/lcov.info"
+
+.PHONY: fuzz
+fuzz: image ## 60s libFuzzer smoke on the bridge-response parser (nightly + cargo-fuzz installed on demand)
+	$(IN_CONTAINER) bash -c '\
+	  export RUSTUP_HOME=/work/.rustup; \
+	  rustup toolchain install nightly --profile minimal >/dev/null 2>&1 || true; \
+	  command -v cargo-fuzz >/dev/null 2>&1 || cargo install cargo-fuzz --locked >/dev/null 2>&1; \
+	  cd fuzz && cargo +nightly fuzz run bridge_response_parse -- -max_total_time=60 2>&1 | tail -12'
+
 .PHONY: release
 release: image ## Produce dist/: osci binary, osci-bridge.jar, SHA256SUMS
 	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml package

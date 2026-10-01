@@ -18,13 +18,14 @@ ARG RUST_VERSION=1.98.1
 ARG MAVEN_VERSION=3.9.11
 ARG MAVEN_SHA512=bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978
 
-# gcc: rustc needs a linker; git: cargo may want it; openssl: test-PKI
-# generation; zip/unzip: jar tooling fallback
+# gcc: rustc needs a linker; g++: libFuzzer's sanitizer runtime links via c++;
+# git: cargo may want it; openssl: test-PKI generation; zip/unzip: jar tooling
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         gcc \
+        g++ \
         libc6-dev \
         git \
         openssl \
@@ -43,7 +44,10 @@ ENV PATH=/opt/cargo/bin:$PATH
 # cargo-deny for license/advisory enforcement (see deny.toml). Pinned like
 # everything else; a supply-chain gate that floats is a suggestion.
 ARG CARGO_DENY_VERSION=0.20.2
+# cargo-llvm-cov for measured coverage (make coverage).
+ARG CARGO_LLVM_COV_VERSION=0.9.1
 RUN /opt/cargo/bin/cargo install cargo-deny --locked --version "${CARGO_DENY_VERSION}" \
+    && /opt/cargo/bin/cargo install cargo-llvm-cov --locked --version "${CARGO_LLVM_COV_VERSION}" \
     && chmod -R a+rX /opt/cargo
 
 # --- Maven (pinned, checksummed) ----------------------------------------------
