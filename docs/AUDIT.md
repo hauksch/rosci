@@ -59,6 +59,26 @@ and talks only to `127.0.0.1`. No test touches any external service; the
 Governikus public test intermediary is deliberately never used, because the
 mission leaves no online traces.
 
+### Measured coverage (`make coverage`)
+
+| component | instrument | line coverage |
+|---|---|---|
+| Rust workspace (unit/integration/CLI) | cargo-llvm-cov, pinned in builder image | 88.0% |
+| Java bridge, unit tests only | JaCoCo 0.8.13 (maven plugin) | 27.5% |
+| Java bridge, e2e only | JaCoCo agent attached via `OSCI_JAVA_OPTS` during the e2e suite | 68.2% |
+| Java bridge, **combined** | jacococli merge of both runs | **71.4%** |
+
+Caveats, honestly: the Rust number excludes the e2e suite (it drives the
+built binary, not instrumented test builds); the Java numbers exclude
+`Bridge.main`'s process plumbing that only the real jar exercises. The
+agent trick works because the bridge honors `OSCI_JAVA_OPTS` — the same
+debugging hatch documented in the README. Baselines recorded 2026-10-01.
+
+Property-based tests (proptest) pin the invariants of the response parser,
+the filename sanitizer and the XML sniffer; a libFuzzer target
+(`make fuzz`, 60 s smoke) threw 5.6 million inputs at the response parser
+with zero crashes on its first run.
+
 ### What the transport-encryption e2e actually proves
 
 The mock intermediary is a real cryptographic peer: it decrypts incoming
