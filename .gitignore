@@ -33,3 +33,9 @@ java/**/dependency-reduced-pom.xml
 
 # coverage artifacts
 /coverage/
+
+# libFuzzer corpora and artifacts
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/target/
+fuzz/coverage/
