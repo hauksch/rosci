@@ -201,8 +201,12 @@ public final class OsciOps
           }
           catch (Exception e)
           {
-            // Not encrypted to us — none of our business, report and move on.
-            m.subject = "<not decryptable with the supplied identity>";
+            // Not encrypted to us, or extraction failed — report and move on,
+            // but leave a trace. Silent catches are how mysteries become
+            // traditions.
+            org.slf4j.LoggerFactory.getLogger(OsciOps.class)
+                                  .warn("encrypted content not extractable", e);
+            m.subject = "<not decryptable with the supplied identity: " + e + ">";
           }
           messages.add(m);
         }

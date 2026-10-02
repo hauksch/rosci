@@ -7,7 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -52,6 +54,14 @@ public final class MockIntermediary
   private static final String FETCH_ATTACHMENT_BODY =
     "<?xml version=\"1.0\"?><XTA><antwort>die behoerde dankt fuer die nachricht"
     + " und wird sich melden. vermutlich per fax.</antwort></XTA>";
+
+  /** The encrypted twin: served inline inside a sealed xenc:EncryptedData block. */
+  private static final String FETCH_ENCRYPTED_ATTACHMENT_BODY =
+    "<?xml version=\"1.0\"?><XTA><antwort>streng vertrauliche antwort, nur mit"
+    + " dem privaten schluessel zu lesen.</antwort></XTA>";
+
+  /** Id of the reader role the encrypted content's key reference points at. */
+  private static final String READER_ROLE_ID = "mock_reader_cipher_1";
 
   private static final SecureRandom RANDOM = new SecureRandom();
   private static final AtomicInteger MESSAGE_IDS = new AtomicInteger(1);
@@ -112,14 +122,8 @@ public final class MockIntermediary
         dump("request-" + n + ".inner.xml", new String(inner, StandardCharsets.UTF_8));
         writeMeta(n, true);
         String innerXml = new String(inner, StandardCharsets.UTF_8);
+        rememberClientCert(innerXml);
 
-        // Not every message type advertises the originator's cipher
-        // certificate (initDialog, for one, keeps its pockets empty), so the
-        // mock remembers the last one it saw — the registration-table
-        // memory of a proper intermediary, minus the paperwork.
-        String certB64 = TransportCrypto.clientCipherCertB64(innerXml);
-        if (certB64 != null)
-          LAST_CLIENT_CERT.set(TransportCrypto.certFromB64(certB64));
         java.security.cert.X509Certificate clientCipher = LAST_CLIENT_CERT.get();
         if (clientCipher == null)
           throw new IOException("no client cipher certificate seen yet "
@@ -131,6 +135,9 @@ public final class MockIntermediary
       else
       {
         writeMeta(n, false);
+        // Plain dialect: remember the client too, so the canned fetch can
+        // carry content encrypted to the fetcher even without transport crypto.
+        rememberClientCert(request);
         out = respondTo(request).getBytes(StandardCharsets.UTF_8);
       }
 
@@ -172,6 +179,26 @@ public final class MockIntermediary
     }
   }
 
+  /**
+   * Not every message type advertises the originator's cipher certificate
+   * (initDialog, for one, keeps its pockets empty), so the mock remembers
+   * the last one it saw — the registration-table memory of a proper
+   * intermediary, minus the paperwork.
+   */
+  private static void rememberClientCert(String xml)
+  {
+    try
+    {
+      String certB64 = TransportCrypto.clientCipherCertB64(xml);
+      if (certB64 != null)
+        LAST_CLIENT_CERT.set(TransportCrypto.certFromB64(certB64));
+    }
+    catch (IOException e)
+    {
+      System.err.println("mock: cannot remember client cert: " + e);
+    }
+  }
+
   private static void dump(String name, String content)
   {
     if (dumpDir == null)
@@ -188,7 +215,7 @@ public final class MockIntermediary
     }
   }
 
-  private static String respondTo(String request)
+  private static String respondTo(String request) throws IOException
   {
     String type = detectType(request);
 
@@ -209,8 +236,7 @@ public final class MockIntermediary
     String xsd;
     String headerExtras = "";
     String bodyContent = "";
-    String extraPartId = null;
-    String extraPartContent = null;
+    List<String[]> extraParts = new ArrayList<>();
     switch (type)
     {
       case "getMessageId":
@@ -245,17 +271,31 @@ public final class MockIntermediary
         break;
       case "fetchDelivery":
       {
-        // Header layout, and a canned message in the postbox: one content
-        // package whose Content references an attachment MIME part — the
-        // exact shape a real fetch delivers (and the path the bridge's
-        // attachment handling is never otherwise exercised by).
+        // Header layout, and a canned message in the postbox with BOTH
+        // dialects of content: a plain attachment-referencing container and
+        // an xenc:EncryptedData block sealed to the fetching client — so
+        // the bridge's decrypt path gets exercised like a real postbox.
         xsd = "soapResponseToFetchDelivery.xsd";
-        headerExtras = bodyElement("responseToFetchDelivery", " Id=\"rsp-1\"", FEEDBACK);
-        bodyContent = "  <osci:ContentPackage><osci:ContentContainer Id=\"mock-cc-1\">"
-                      + "<osci:Content Id=\"mock-c-1\" href=\"cid:" + FETCH_ATTACHMENT_ID
-                      + "\"></osci:Content></osci:ContentContainer></osci:ContentPackage>";
-        extraPartId = FETCH_ATTACHMENT_ID;
-        extraPartContent = FETCH_ATTACHMENT_BODY;
+        String encryptedBlock = encryptedContentBlock();
+        if (encryptedBlock != null)
+        {
+          headerExtras = readerRoleHeader() + bodyElement("responseToFetchDelivery",
+                                                          " Id=\"rsp-1\"", FEEDBACK);
+          bodyContent = "  <osci:ContentPackage><osci:ContentContainer Id=\"mock-cc-1\">"
+                        + "<osci:Content Id=\"mock-c-1\" href=\"cid:" + FETCH_ATTACHMENT_ID
+                        + "\"></osci:Content></osci:ContentContainer>"
+                        + encryptedBlock + "</osci:ContentPackage>";
+          extraParts.add(new String[]{FETCH_ATTACHMENT_ID, FETCH_ATTACHMENT_BODY});
+        }
+        else
+        {
+          // No client cert remembered yet: plain content only.
+          headerExtras = bodyElement("responseToFetchDelivery", " Id=\"rsp-1\"", FEEDBACK);
+          bodyContent = "  <osci:ContentPackage><osci:ContentContainer Id=\"mock-cc-1\">"
+                        + "<osci:Content Id=\"mock-c-1\" href=\"cid:" + FETCH_ATTACHMENT_ID
+                        + "\"></osci:Content></osci:ContentContainer></osci:ContentPackage>";
+          extraParts.add(new String[]{FETCH_ATTACHMENT_ID, FETCH_ATTACHMENT_BODY});
+        }
         break;
       }
       case "fetchProcessCard":
@@ -280,7 +320,76 @@ public final class MockIntermediary
     }
 
     return envelope(bodyContent, headerExtras, xsd, seqAttr, conversationId, echoedChallenge,
-                    extraPartId, extraPartContent);
+                    extraParts);
+  }
+
+  /**
+   * Builds the xenc:EncryptedData block for the canned fetch message: a
+   * sealed inner ContentContainer (inline CipherValues, key referenced via
+   * RetrievalMethod to the reader role header), or null when no client
+   * cipher certificate has been remembered yet.
+   */
+  private static String encryptedContentBlock() throws IOException
+  {
+    java.security.cert.X509Certificate client = LAST_CLIENT_CERT.get();
+    if (client == null || crypto == null)
+      return null;
+
+    // Inline Base64Content, not an attachment reference: the decrypted
+    // inner container is parsed as a fresh message that cannot resolve
+    // outer-message attachment hrefs — real encrypted contents ride inline
+    // for exactly this reason.
+    String innerContainer = "<osci:ContentContainer xmlns:ds=\"" + TransportCrypto.DS_NS + "\""
+                            + " xmlns:osci=\"http://www.osci.de/2002/04/osci\""
+                            + " xmlns:xenc=\"" + TransportCrypto.XENC_NS + "\""
+                            + " Id=\"mock-cc-enc\">"
+                            + "<osci:Base64Content Id=\"mock-c-enc\">"
+                            + Base64.getEncoder()
+                                    .encodeToString(FETCH_ENCRYPTED_ATTACHMENT_BODY.getBytes(StandardCharsets.UTF_8))
+                            + "</osci:Base64Content></osci:ContentContainer>";
+    TransportCrypto.Sealed sealed = crypto.seal(innerContainer.getBytes(StandardCharsets.UTF_8), client);
+    String keyB64 = Base64.getEncoder().encodeToString(sealed.wrappedKey());
+    String blobB64 = Base64.getEncoder().encodeToString(sealed.blob());
+    String readerId = READER_ROLE_ID;
+
+    return "<xenc:EncryptedData Id=\"mock-encdata\" MimeType=\"text/xml\">"
+           + "<xenc:EncryptionMethod Algorithm=\"" + TransportCrypto.AES256_GCM + "\">"
+           + "<osci128:IvLength xmlns:osci128=\"" + TransportCrypto.OSCI128_NS + "\" Value=\"12\">"
+           + "</osci128:IvLength></xenc:EncryptionMethod>"
+           + "<ds:KeyInfo><xenc:EncryptedKey>"
+           + "<xenc:EncryptionMethod Algorithm=\"" + TransportCrypto.RSA_OAEP + "\">"
+           + "<xenc11:MGF xmlns:xenc11=\"" + TransportCrypto.XENC11_NS + "\" Algorithm=\""
+           + TransportCrypto.MGF1_SHA256 + "\"></xenc11:MGF>"
+           + "<ds:DigestMethod Algorithm=\"" + TransportCrypto.DIGEST_SHA256 + "\">"
+           + "</ds:DigestMethod></xenc:EncryptionMethod>"
+           + "<ds:KeyInfo><ds:RetrievalMethod Type=\"http://www.w3.org/2000/09/xmldsig#X509Data\""
+           + " URI=\"#" + readerId + "\"></ds:RetrievalMethod></ds:KeyInfo>"
+           + "<xenc:CipherData><xenc:CipherValue>" + keyB64 + "</xenc:CipherValue></xenc:CipherData>"
+           + "</xenc:EncryptedKey></ds:KeyInfo>"
+           + "<xenc:CipherData><xenc:CipherValue>" + blobB64 + "</xenc:CipherValue></xenc:CipherData>"
+           + "</xenc:EncryptedData>";
+  }
+
+  /** The reader role header the encrypted content's RetrievalMethod points at. */
+  private static String readerRoleHeader() throws IOException
+  {
+    java.security.cert.X509Certificate client = LAST_CLIENT_CERT.get();
+    if (client == null)
+      return "";
+    String certB64;
+    try
+    {
+      certB64 = Base64.getEncoder().encodeToString(client.getEncoded());
+    }
+    catch (Exception e)
+    {
+      throw new IOException("cannot encode client cert: " + e, e);
+    }
+    return "<osci:NonIntermediaryCertificates Id=\"nonintermediarycertificates\""
+           + " soap:actor=\"http://www.w3.org/2001/12/soap-envelope/actor/none\" soap:mustUnderstand=\"1\">"
+           + "<osci:CipherCertificateOtherReader Id=\"" + READER_ROLE_ID + "\">"
+           + "<ds:X509Data><ds:X509Certificate>" + certB64 + "</ds:X509Certificate></ds:X509Data>"
+           + "</osci:CipherCertificateOtherReader></osci:NonIntermediaryCertificates>";
   }
 
   private static String detectType(String request)
@@ -303,7 +412,7 @@ public final class MockIntermediary
 
   private static String envelope(String bodyContent, String headerExtras, String xsdName,
                                  String seqAttr, String conversationId, String echoedChallenge,
-                                 String extraPartId, String extraPartContent)
+                                 List<String[]> extraParts)
   {
     String freshChallenge = b64("challenge-" + RANDOM.nextInt(1_000_000));
     String responseElement = (echoedChallenge == null || echoedChallenge.isBlank())
@@ -316,7 +425,7 @@ public final class MockIntermediary
     String schemaLocation = SOAP_NS + " " + xsdName + " " + XSD_ENC_SIG;
     String xml = """
         <?xml version="1.0" encoding="utf-8"?>
-        <soap:Envelope xmlns:soap="%s" xmlns:osci="%s" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="%s">
+        <soap:Envelope xmlns:ds="%s" xmlns:soap="%s" xmlns:osci="%s" xmlns:xenc="%s" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="%s">
          <soap:Header>
           <osci:ControlBlock Id="cb-1" ConversationId="%s"%s>%s
            <osci:Challenge>%s</osci:Challenge>
@@ -327,7 +436,8 @@ public final class MockIntermediary
         %s
          </soap:Body>
         </soap:Envelope>
-        """.formatted(SOAP_NS, OSCI_NS, schemaLocation, conversationId, seqPart, responseElement,
+        """.formatted(TransportCrypto.DS_NS, SOAP_NS, OSCI_NS, TransportCrypto.XENC_NS,
+                      schemaLocation, conversationId, seqPart, responseElement,
                       freshChallenge, headerExtras, bodyContent);
 
     // The client's response parser insists on full MIME framing — headers,
@@ -336,6 +446,11 @@ public final class MockIntermediary
     // attachments ride as additional parts after the envelope.
     String boundary = "MIME_boundary_mock_" + Long.toHexString(RANDOM.nextLong());
     byte[] xmlBytes = xml.getBytes(StandardCharsets.UTF_8);
+    StringBuilder parts = new StringBuilder();
+    for (String[] part : extraParts)
+    {
+      parts.append(attachmentPart(boundary, part[0], part[1]));
+    }
     return "MIME-Version: 1.0\r\n"
            + "Content-Type: Multipart/Related; boundary=" + boundary + "; type=text/xml\r\n"
            + "\r\n"
@@ -346,7 +461,7 @@ public final class MockIntermediary
            + "Content-Length: " + xmlBytes.length + "\r\n"
            + "\r\n"
            + xml + "\r\n"
-           + attachmentPart(boundary, extraPartId, extraPartContent)
+           + parts
            + "--" + boundary + "--\r\n";
   }
 

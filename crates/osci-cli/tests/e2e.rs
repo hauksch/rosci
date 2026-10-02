@@ -300,7 +300,8 @@ fn send_fetch_status_against_mock_intermediary() {
         .get_output()
         .stdout
         .clone();
-    let messages: serde_json::Value = serde_json::from_slice(&json_out).expect("fetch json");
+    let messages: serde_json::Value =
+        serde_json::from_slice(&json_out).expect("fetch json");
     let contents = messages[0]["contents"].as_array().expect("contents");
     assert!(
         !contents.is_empty(),
@@ -317,6 +318,29 @@ fn send_fetch_status_against_mock_intermediary() {
         .decode(data)
         .expect("valid base64");
     assert!(String::from_utf8_lossy(&decoded).contains("die behoerde dankt"));
+
+    // The encrypted twin: sealed with RSA-OAEP + AES-GCM to the client's
+    // cipher certificate; the bridge must decrypt it with the fetch
+    // identity's decrypter and expose it as encrypted_contents. It arrives
+    // as its own message entry — find it structurally, not by index.
+    let enc_msg = messages
+        .as_array()
+        .expect("messages array")
+        .iter()
+        .find(|m| m["encrypted_contents"].as_array().is_some_and(|c| !c.is_empty()))
+        .expect("one message with decrypted encrypted_contents");
+    let encrypted = enc_msg["encrypted_contents"].as_array().unwrap();
+    let enc_data = encrypted[0]["data"].as_str().expect("encrypted base64 data");
+    let enc_decoded = base64::engine::general_purpose::STANDARD
+        .decode(enc_data)
+        .expect("valid base64");
+    let enc_text = String::from_utf8_lossy(&enc_decoded);
+    assert!(
+        enc_text.contains("streng vertrauliche antwort"),
+        "decrypted content must match the canned secret: {enc_text}"
+    );
+    // Inline content carries no filename — the container field marks it.
+    assert_eq!(encrypted[0]["container"].as_str(), Some("encrypted"));
 }
 
 #[test]

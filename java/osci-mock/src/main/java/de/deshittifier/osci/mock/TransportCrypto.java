@@ -79,6 +79,12 @@ public final class TransportCrypto
   private static final String XSI = "http://www.w3.org/2001/XMLSchema-instance";
   private static final String XENC11 = "http://www.w3.org/2009/xmlenc11#";
   private static final String OSCI128 = "http://xoev.de/transport/osci12/8";
+
+  // Namespace URIs shared with MockIntermediary's canned content builder.
+  static final String XENC_NS = XENC;
+  static final String DS_NS = DS;
+  static final String XENC11_NS = XENC11;
+  static final String OSCI128_NS = OSCI128;
   private static final String XSD_ENC_SIG =
     "http://www.w3.org/2000/09/xmldsig# oscisig.xsd http://www.w3.org/2001/04/xmlenc# oscienc.xsd";
   private static final String XSD_ENCRYPTED =
@@ -180,6 +186,46 @@ public final class TransportCrypto
     return plain;
   }
 
+  /** A sealed payload: the wrapped session key and the encrypted bytes. */
+  record Sealed(byte[] wrappedKey, byte[] blob)
+  {}
+
+  /**
+   * Seals {@code plain} for the holder of {@code cert}: fresh AES-256-GCM
+   * session key, RSA-OAEP key transport (SHA-256/MGF1-SHA-256), blob
+   * formatted as IV(12) || ciphertext || tag — the exact dialect the OSCI
+   * library writes and reads.
+   */
+  public Sealed seal(byte[] plain, X509Certificate cert) throws IOException
+  {
+    try
+    {
+      byte[] aesKey = new byte[AES_KEY_BITS / 8];
+      random.nextBytes(aesKey);
+      byte[] iv = new byte[IV_LENGTH];
+      random.nextBytes(iv);
+
+      Cipher aes = Cipher.getInstance("AES/GCM/NoPadding");
+      aes.init(Cipher.ENCRYPT_MODE,
+               new SecretKeySpec(aesKey, "AES"),
+               new GCMParameterSpec(GCM_TAG_BITS, iv));
+      byte[] ct = aes.doFinal(plain);
+      byte[] blob = new byte[IV_LENGTH + ct.length];
+      System.arraycopy(iv, 0, blob, 0, IV_LENGTH);
+      System.arraycopy(ct, 0, blob, IV_LENGTH, ct.length);
+
+      Cipher rsa = Cipher.getInstance("RSA/ECB/OAEPPadding");
+      rsa.init(Cipher.ENCRYPT_MODE, cert.getPublicKey(),
+               new OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA256,
+                                     PSource.PSpecified.DEFAULT));
+      return new Sealed(rsa.doFinal(aesKey), blob);
+    }
+    catch (Exception e)
+    {
+      throw new IOException("sealing failed: " + e, e);
+    }
+  }
+
   /**
    * Wraps an inner response envelope for the client: fresh AES-256-GCM key,
    * RSA-OAEP key transport to the client's cipher certificate, full MIME
@@ -188,36 +234,17 @@ public final class TransportCrypto
    */
   public byte[] encryptResponse(byte[] innerXml, X509Certificate clientCipherCert) throws IOException
   {
-    byte[] aesKey = new byte[AES_KEY_BITS / 8];
-    random.nextBytes(aesKey);
-    byte[] iv = new byte[IV_LENGTH];
-    random.nextBytes(iv);
-
-    byte[] cipherBlob;
-    byte[] wrappedKey;
-    byte[] certDer;
+    Sealed sealed = seal(innerXml, clientCipherCert);
+    String certB64;
     try
     {
-      Cipher aes = Cipher.getInstance("AES/GCM/NoPadding");
-      aes.init(Cipher.ENCRYPT_MODE,
-               new SecretKeySpec(aesKey, "AES"),
-               new GCMParameterSpec(GCM_TAG_BITS, iv));
-      cipherBlob = aes.doFinal(innerXml); // ciphertext || tag
-
-      Cipher rsa = Cipher.getInstance("RSA/ECB/OAEPPadding");
-      rsa.init(Cipher.ENCRYPT_MODE, clientCipherCert.getPublicKey(),
-               new OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA256,
-                                     PSource.PSpecified.DEFAULT));
-      wrappedKey = rsa.doFinal(aesKey);
-      certDer = clientCipherCert.getEncoded();
+      certB64 = Base64.getEncoder().encodeToString(clientCipherCert.getEncoded());
     }
     catch (Exception e)
     {
-      throw new IOException("transport encryption failed: " + e, e);
+      throw new IOException("cannot encode client cert: " + e, e);
     }
-
-    String certB64 = Base64.getEncoder().encodeToString(certDer);
-    String keyB64 = Base64.getEncoder().encodeToString(wrappedKey);
+    String keyB64 = Base64.getEncoder().encodeToString(sealed.wrappedKey());
     String xml = """
         <?xml version="1.0" encoding="UTF-8"?>
         <soap:Envelope xmlns:ds="%s" xmlns:soap="%s" xmlns:xenc="%s" xmlns:xsi="%s" xsi:schemaLocation="%s"><soap:Body><xenc:EncryptedData MimeType="Multipart/Related"><xenc:EncryptionMethod Algorithm="%s"><osci128:IvLength xmlns:osci128="%s" Value="%d"></osci128:IvLength></xenc:EncryptionMethod><ds:KeyInfo><xenc:EncryptedKey><xenc:EncryptionMethod Algorithm="%s"><xenc11:MGF xmlns:xenc11="%s" Algorithm="%s"></xenc11:MGF><ds:DigestMethod Algorithm="%s"></ds:DigestMethod></xenc:EncryptionMethod><ds:KeyInfo><ds:X509Data><ds:X509Certificate>%s</ds:X509Certificate></ds:X509Data></ds:KeyInfo><xenc:CipherData><xenc:CipherValue>%s</xenc:CipherValue></xenc:CipherData></xenc:EncryptedKey></ds:KeyInfo><xenc:CipherData><xenc:CipherReference URI="cid:%s"><xenc:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#base64"></ds:Transform></xenc:Transforms></xenc:CipherReference></xenc:CipherData></xenc:EncryptedData></soap:Body></soap:Envelope>"""
@@ -245,15 +272,14 @@ public final class TransportCrypto
     String tail = "\r\n--" + boundary + "--\r\n";
 
     // Binary part assembled as raw bytes — never through a lossy charset.
-    // The wire format is IV(12) || ciphertext || tag: the reader pulls the
-    // first twelve bytes as the IV, exactly like the library's own writer.
+    // seal() already laid the blob out as IV(12) || ciphertext || tag.
     byte[] prefix = head.getBytes(StandardCharsets.US_ASCII);
+    byte[] blob = sealed.blob();
     byte[] tailBytes = tail.getBytes(StandardCharsets.US_ASCII);
-    byte[] out = new byte[prefix.length + IV_LENGTH + cipherBlob.length + tailBytes.length];
+    byte[] out = new byte[prefix.length + blob.length + tailBytes.length];
     System.arraycopy(prefix, 0, out, 0, prefix.length);
-    System.arraycopy(iv, 0, out, prefix.length, IV_LENGTH);
-    System.arraycopy(cipherBlob, 0, out, prefix.length + IV_LENGTH, cipherBlob.length);
-    System.arraycopy(tailBytes, 0, out, prefix.length + IV_LENGTH + cipherBlob.length, tailBytes.length);
+    System.arraycopy(blob, 0, out, prefix.length, blob.length);
+    System.arraycopy(tailBytes, 0, out, prefix.length + blob.length, tailBytes.length);
     return out;
   }
 
