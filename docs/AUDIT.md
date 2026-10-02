@@ -79,6 +79,18 @@ the filename sanitizer and the XML sniffer; a libFuzzer target
 (`make fuzz`, 60 s smoke) threw 5.6 million inputs at the response parser
 with zero crashes on its first run.
 
+### Large payloads
+
+A manual probe verified a **5 MB XTA** through both the plain and the
+fully-encrypted (transport + content signature + content encryption)
+paths without chunking; a ~2 MB regression case runs in the e2e suite.
+Chunked transfer (`PartialStoreDelivery`, required by the OSCI standard
+beyond an intermediary-specific threshold) is **not implemented** in the
+bridge — payloads beyond what a plain `StoreDelivery` accepts would fail
+loudly rather than silently truncate. The threshold is
+intermediary-specific and untested beyond 5 MB; if your use case needs
+more, that is the feature request to file.
+
 ### What the transport-encryption e2e actually proves
 
 The mock intermediary is a real cryptographic peer: it decrypts incoming

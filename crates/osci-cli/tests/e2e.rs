@@ -526,3 +526,56 @@ fn send_fails_cleanly_when_intermediary_is_down() {
         .failure()
         .code(4);
 }
+
+#[test]
+fn large_payload_flows_through_both_transports() {
+    let Some((e2e, _mock)) = E2e::setup() else {
+        return;
+    };
+
+    // ~2 MB of realistic XTA structure: enough to prove the MIME/streaming
+    // path handles real payloads, small enough to keep the suite quick.
+    // (A manual probe verified 5 MB through plain and fully-encrypted
+    // transports alike — see docs/AUDIT.md.)
+    let mut xml = String::from("<?xml version=\"1.0\"?><XTA>");
+    let target = 2 * 1024 * 1024;
+    let mut i = 0;
+    while xml.len() < target {
+        let marker = format!("<datensatz nr=\"{i:06}\">nutzdaten fuers amt</datensatz>");
+        xml.push_str(&marker);
+        i += 1;
+    }
+    xml.push_str("</XTA>");
+    let big = e2e.workdir.join("gross.xta");
+    std::fs::write(&big, xml).unwrap();
+    assert!(big.metadata().unwrap().len() > 1_900_000, "payload must be ~2MB");
+
+    // Plain transport, no content crypto: maximum payload, minimum ceremony.
+    e2e.rosci()
+        .arg("send")
+        .arg("gross.xta")
+        .args(["--to", "cert:recipient-cipher.pem"])
+        .args(["--intermediary", &_mock_url_from_dvdv(&e2e)])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .arg("--insecure-transport")
+        .arg("--no-encrypt")
+        .arg("--no-sign")
+        .timeout(Duration::from_secs(300))
+        .assert()
+        .success();
+
+    // Full stack: transport encryption + content signing + encryption.
+    e2e.rosci()
+        .arg("send")
+        .arg("gross.xta")
+        .args(["--to", "cert:recipient-cipher.pem"])
+        .args(["--intermediary", &_mock_url_from_dvdv(&e2e)])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .timeout(Duration::from_secs(300))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("message_id"));
+}
