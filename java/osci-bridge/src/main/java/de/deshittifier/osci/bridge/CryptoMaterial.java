@@ -71,15 +71,13 @@ public final class CryptoMaterial
   {
     private final X509Certificate cert;
     private final PrivateKey key;
-    private final boolean usePss;
 
-    public P12Signer(byte[] p12, char[] pin, boolean usePss)
+    public P12Signer(byte[] p12, char[] pin)
     {
       KeyStore ks = loadP12(p12, pin);
       String alias = firstKeyAlias(ks);
       this.cert = certificate(ks, alias);
       this.key = privateKey(ks, alias, pin);
-      this.usePss = usePss;
       require(this.cert != null && this.key != null, "PKCS#12 contains no usable key entry");
     }
 
@@ -114,20 +112,13 @@ public final class CryptoMaterial
         algo = Constants.SIGNATURE_ALGORITHM_ECDSA_SHA512;
       else if ("RSA".equals(keyType))
       {
-        if (usePss)
-        {
-          if (algo.contains("sha256"))
-            algo = Constants.SIGNATURE_ALGORITHM_RSA_SHA256_PSS;
-          else if (algo.contains("sha512"))
-            algo = Constants.SIGNATURE_ALGORITHM_RSA_SHA512_PSS;
-        }
-        else
-        {
-          if (algo.endsWith("sha256"))
-            algo = Constants.SIGNATURE_ALGORITHM_RSA_SHA256;
-          else if (algo.endsWith("sha512"))
-            algo = Constants.SIGNATURE_ALGORITHM_RSA_SHA512;
-        }
+        // PSS only: the bridge always constructs this signer with PSS on,
+        // and the library has deprecated the PKCS#1 v1.5 constants — the
+        // museum branch would be both dead and officially discouraged.
+        if (algo.contains("sha256"))
+          algo = Constants.SIGNATURE_ALGORITHM_RSA_SHA256_PSS;
+        else if (algo.contains("sha512"))
+          algo = Constants.SIGNATURE_ALGORITHM_RSA_SHA512_PSS;
       }
       return algo;
     }
@@ -138,7 +129,7 @@ public final class CryptoMaterial
       try
       {
         Provider p = DialogHandler.getSecurityProvider();
-        String jca = (String)Constants.JCA_JCE_MAP.get(algorithm);
+        String jca = Constants.JCA_JCE_MAP.get(algorithm);
         Signature engine = (p == null) ? Signature.getInstance(jca)
                                       : Signature.getInstance(jca, p);
         engine.initSign(key);

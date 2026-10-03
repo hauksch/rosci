@@ -150,6 +150,10 @@ git-guard: ## Fail if this repository ever grows a remote (mission rule: no trac
 	fi
 	@echo "git-guard: no remotes configured. Gut so."
 
+.PHONY: check
+check: lint test audit verify-deps git-guard ## Everything a good day needs: all gates in one command
+	@echo "check: all gates green. Das Amt hätte nichts zu bemängeln."
+
 .PHONY: lock-info
 lock-info: image ## Print exact tool versions + digests for container/LOCK.md
 	@OCI=$(OCI) bash container/record-lock.sh $(IMAGE)

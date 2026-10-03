@@ -21,7 +21,13 @@ Exit codes: 0 ok · 2 usage/config · 3 DVDV miss · 4 transport/OSCI ·
 5 crypto · 6 bridge/internal";
 
 #[derive(Parser)]
-#[command(name = "rosci", version, about = ABOUT, disable_help_subcommand = true)]
+#[command(
+    name = "rosci",
+    version,
+    about = ABOUT,
+    disable_help_subcommand = true,
+    after_help = "Environment: OSCI_JAVA_OPTS passes extra JVM flags to the bridge\n(e.g. -Dorg.slf4j.simpleLogger.defaultLogLevel=debug). See README.md\nfor the full OSCI_* list."
+)]
 struct Cli {
     /// verbosity: none = warnings, -v = info, -vv = debug, -vvv = trace
     #[arg(short, long, action = clap::ArgAction::Count)]
@@ -452,7 +458,7 @@ fn cmd_send(args: SendArgs) -> Result<(), Error> {
         println!("message_id: {}", receipt.message_id);
         println!("status:     accepted by intermediary");
     }
-    client.shutdown().ok();
+    client.finish();
     Ok(())
 }
 
@@ -472,7 +478,7 @@ fn cmd_fetch(args: FetchArgs) -> Result<(), Error> {
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&messages)?);
-        client.shutdown().ok();
+        client.finish();
         return Ok(());
     }
 
@@ -509,7 +515,7 @@ fn cmd_fetch(args: FetchArgs) -> Result<(), Error> {
     if messages.is_empty() {
         println!("postbox empty. enjoy the silence.");
     }
-    client.shutdown().ok();
+    client.finish();
     Ok(())
 }
 
@@ -542,7 +548,7 @@ fn cmd_status(args: StatusArgs) -> Result<(), Error> {
             }
         }
     }
-    client.shutdown().ok();
+    client.finish();
     Ok(())
 }
 

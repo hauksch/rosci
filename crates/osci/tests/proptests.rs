@@ -1,3 +1,6 @@
+// Tests panic on broken assumptions — that is the job description.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 //! Property-based invariants: whatever the world throws at these parsers,
 //! they must not panic, and their promises must hold for all inputs, not
 //! just the ones we thought of while writing them.

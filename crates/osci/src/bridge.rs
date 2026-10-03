@@ -55,6 +55,7 @@ impl BridgeConfig {
         }
     }
 
+    /// Overrides the per-request response timeout (default 300 s).
     pub fn response_timeout(mut self, timeout: Duration) -> Self {
         self.response_timeout = timeout;
         self
@@ -71,6 +72,8 @@ impl std::fmt::Debug for BridgeHandle {
     }
 }
 
+/// A live bridge process handle: owns the child, its stdin and the
+/// stdout reader thread. One request in, one response out, no surprises.
 pub struct BridgeHandle {
     child: Child,
     stdin: ChildStdin,
@@ -92,8 +95,17 @@ impl BridgeHandle {
             .spawn()
             .map_err(|e| Error::BridgeSpawn(format!("{}: {e}", cfg.cmd[0])))?;
 
-        let stdin = child.stdin.take().expect("piped stdin");
-        let stdout = child.stdout.take().expect("piped stdout");
+        // take() can only miss if the piped() above was ignored — treat it
+        // as a spawn failure rather than a panic; the distinction is the
+        // caller's business, not ours.
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| Error::BridgeSpawn("child stdin was not piped".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| Error::BridgeSpawn("child stdout was not piped".into()))?;
 
         // Reader thread: the only thing allowed to touch bridge stdout.
         let (tx, rx) = mpsc::channel();

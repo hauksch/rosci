@@ -63,7 +63,7 @@ public final class OsciOps
     byte[] xta = Base64.getDecoder().decode(req.content.data);
 
     P12Signer signer = new P12Signer(b64(req.identity.signer_p12),
-                                     pin(req.identity.signer_pin), true);
+                                     pin(req.identity.signer_pin));
     byte[] decrypterP12 = req.identity.decrypter_p12 != null
       ? b64(req.identity.decrypter_p12) : b64(req.identity.signer_p12);
     String decrypterPin = req.identity.decrypter_pin != null
@@ -145,7 +145,7 @@ public final class OsciOps
   {
     requireDialogShape(req);
     P12Signer signer = new P12Signer(b64(req.identity.signer_p12),
-                                     pin(req.identity.signer_pin), true);
+                                     pin(req.identity.signer_pin));
     byte[] decrypterP12 = req.identity.decrypter_p12 != null
       ? b64(req.identity.decrypter_p12) : b64(req.identity.signer_p12);
     String decrypterPin = req.identity.decrypter_pin != null
@@ -238,7 +238,7 @@ public final class OsciOps
     require(req.selection_rule != null, "process-card needs selection_rule (the message id)");
 
     P12Signer signer = new P12Signer(b64(req.identity.signer_p12),
-                                     pin(req.identity.signer_pin), true);
+                                     pin(req.identity.signer_pin));
     byte[] decrypterP12 = req.identity.decrypter_p12 != null
       ? b64(req.identity.decrypter_p12) : b64(req.identity.signer_p12);
     String decrypterPin = req.identity.decrypter_pin != null

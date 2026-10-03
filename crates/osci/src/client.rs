@@ -35,11 +35,14 @@ impl std::fmt::Debug for OsciClient {
 /// How to select messages when fetching.
 #[derive(Debug, Clone)]
 pub enum FetchQuery {
+    /// Only the message with this OSCI message id.
     ByMessageId(String),
+    /// Everything waiting in the postbox.
     All,
 }
 
 impl OsciClient {
+    /// Starts the builder for a new client.
     pub fn builder() -> OsciClientBuilder {
         OsciClientBuilder::default()
     }
@@ -96,6 +99,13 @@ impl OsciClient {
         let rsp = self.bridge.call(req)?;
         let result = rsp.result.unwrap_or_default();
         Ok(result.process_cards.unwrap_or_default())
+    }
+
+    /// End-of-life convenience: shuts the bridge down and swallows the
+    /// error — at this point the work either succeeded or the real error
+    /// was already reported. The one shutdown dance, in one place.
+    pub fn finish(&mut self) {
+        self.shutdown().ok();
     }
 
     /// Tells the bridge to exit and waits for it.
@@ -227,11 +237,14 @@ impl OsciClientBuilder {
 /// certificate. (`DVDV entries resolve into one of these.)
 #[derive(Debug, Clone)]
 pub struct Recipient {
+    /// The recipient's cipher certificate (PEM or base64 DER).
     pub cipher_cert: String,
+    /// Optional signature certificate.
     pub signature_cert: Option<String>,
 }
 
 impl Recipient {
+    /// Loads a recipient from a cipher certificate file (PEM or DER).
     pub fn from_cipher_cert_file(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
         let pem = std::fs::read_to_string(path).map_err(|e| {
@@ -246,6 +259,7 @@ impl Recipient {
         })
     }
 
+    /// Builds a recipient from a cipher certificate in PEM or base64 DER form.
     pub fn from_cipher_cert_pem(pem: impl Into<String>) -> Self {
         Self {
             cipher_cert: pem.into(),
@@ -273,11 +287,13 @@ pub struct SendBuilder<'a> {
 }
 
 impl SendBuilder<'_> {
+    /// Sets the recipient (required before submit).
     pub fn recipient(mut self, recipient: Recipient) -> Self {
         self.recipient = Some(recipient);
         self
     }
 
+    /// Sets the message subject.
     pub fn subject(mut self, subject: impl Into<String>) -> Self {
         self.subject = Some(subject.into());
         self
@@ -335,7 +351,9 @@ pub fn resolve_dvdv<D: DvdvDirectory + ?Sized>(
 ) -> Result<(Intermediary, Recipient), Error> {
     let mut hits = directory.find(org_key, category)?;
     let entry = if hits.len() == 1 {
-        hits.pop().expect("len checked")
+        hits.pop().ok_or_else(|| {
+            Error::DvdvLookup(format!("org key {org_key}: entry vanished mid-resolution"))
+        })?
     } else {
         return Err(Error::DvdvLookup(format!(
             "org key {org_key} is ambiguous: {} entries, ask for a category",

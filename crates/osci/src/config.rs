@@ -15,6 +15,7 @@ pub struct Intermediary {
 }
 
 impl Intermediary {
+    /// An intermediary from its entry URL and cipher certificate.
     pub fn new(url: impl Into<String>, cipher_cert: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -84,10 +85,13 @@ impl Identity {
 pub struct Tls {
     /// Additional trust anchors (PEM / base64 DER). Empty = system store.
     pub trust_anchors: Vec<String>,
-    /// TLS client authentication bundle (PEM bytes of a PKCS#12, base64).
+    /// TLS client authentication bundle (base64 PKCS#12).
     pub client_p12_b64: Option<String>,
+    /// PIN for the TLS client bundle.
     pub client_pin: Option<String>,
+    /// TCP connect timeout in milliseconds.
     pub connect_timeout_ms: Option<u64>,
+    /// Socket read timeout in milliseconds.
     pub read_timeout_ms: Option<u64>,
 }
 

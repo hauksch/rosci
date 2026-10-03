@@ -91,6 +91,23 @@ loudly rather than silently truncate. The threshold is
 intermediary-specific and untested beyond 5 MB; if your use case needs
 more, that is the feature request to file.
 
+### Reproducible jars
+
+`java/*/pom.xml` pin `project.build.outputTimestamp`; two clean builds of
+the same tree produce **byte-identical** bridge jars (verified 2026-10-03:
+`bce430b77806a706878a41fbc19efe12ceba9f2fb73536b40bfa83f3f9f8ebc1` twice).
+The Rust release binary is deterministic within a pinned container for the
+same reason: same tree, same toolchain, same bytes. What ran is what the
+sources say — the checksum proves it after the fact.
+
+### Strict compilers
+
+Both Java modules compile with `-Xlint:all` and fail on warnings (the
+gate's first catches: a missing `serialVersionUID`, a redundant cast, use
+of deprecated PKCS#1 v1.5 constants — the PSS-only path is now the only
+path). The Rust library denies `missing_docs` and warns on
+`unwrap`/`expect` in library code.
+
 ### What the transport-encryption e2e actually proves
 
 The mock intermediary is a real cryptographic peer: it decrypts incoming

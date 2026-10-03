@@ -78,7 +78,7 @@ class CryptoMaterialTest
     X509Certificate cert = certificateFor(kp, "CN=signer-test");
     byte[] p12 = pkcs12(kp, cert, "signer");
 
-    P12Signer signer = new P12Signer(p12, PIN, true);
+    P12Signer signer = new P12Signer(p12, PIN);
     assertEquals(cert, signer.getCertificate());
 
     byte[] data = "die nutzdaten".getBytes(StandardCharsets.UTF_8);
@@ -96,7 +96,7 @@ class CryptoMaterialTest
     KeyPair kp = rsaKeyPair();
     byte[] p12 = pkcs12(kp, certificateFor(kp, "CN=wrong-pin"), "alias");
     BridgeException e = assertThrows(BridgeException.class,
-                                     () -> new P12Signer(p12, "falsche-pin".toCharArray(), true));
+                                     () -> new P12Signer(p12, "falsche-pin".toCharArray()));
     assertEquals(BridgeException.CRYPTO, e.kind);
   }
 

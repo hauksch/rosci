@@ -1,3 +1,6 @@
+// Tests panic on broken assumptions — that is the job description.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 //! Bridge lifecycle integration tests: spawn fake bridges (bash scripts),
 //! exercise timeouts, garbage, mismatches and death. No JVM harmed —
 //! the JVM comes in for the real e2e suite later.

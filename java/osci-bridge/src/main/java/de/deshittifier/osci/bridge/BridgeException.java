@@ -6,6 +6,11 @@ package de.deshittifier.osci.bridge;
  */
 public final class BridgeException extends RuntimeException
 {
+  // The exception is never serialized across the wire — the line protocol
+  // carries the fields — but a Throwable without an explicit uid makes
+  // strict javac grumble, and strict javac is right.
+  private static final long serialVersionUID = 2026100300L;
+
   public static final String PROTOCOL = "protocol";
   public static final String CRYPTO = "crypto";
   public static final String TRANSPORT = "transport";

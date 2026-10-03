@@ -18,7 +18,16 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <!-- Fixed jar entry timestamps: two builds from the same tree produce
+         byte-identical jars (verified via make release twice). -->
+    <project.build.outputTimestamp>2026-10-01T00:00:00Z</project.build.outputTimestamp>
     <maven.compiler.release>17</maven.compiler.release>
+    <maven.compiler.parameters>true</maven.compiler.parameters>
+
+    <!-- Warnings are findings. Findings fail the build. -->
+    <maven.compiler.showWarnings>true</maven.compiler.showWarnings>
+    <maven.compiler.failOnWarning>true</maven.compiler.failOnWarning>
 
     <!-- pinned, checksum-verified via make manifest / make verify-deps -->
     <osci.version>2.6.1</osci.version>
@@ -81,6 +90,17 @@
   <build>
     <finalName>osci-bridge</finalName>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <compilerArgs>
+            <arg>-Xlint:all</arg>
+            <arg>-Xlint:-processing</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
       <plugin>
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>

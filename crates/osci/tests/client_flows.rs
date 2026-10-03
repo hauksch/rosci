@@ -1,3 +1,6 @@
+// Tests panic on broken assumptions — that is the job description.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 //! Full client-API flows against the well-behaved fake bridge: builder
 //! handshake, send, fetch, process-card, DVDV resolution. Everything the
 //! real jar + mock intermediary do later, minus the JVM startup tax.

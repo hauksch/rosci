@@ -6,6 +6,10 @@
 //! stdio; this crate spawns it, drives it, and maps its errors into types
 //! that don't require a correspondence course in SOAP fault codes.
 //!
+//! (Test builds may unwrap and expect freely — panicking on a broken
+//! assumption is precisely what a test is for.)
+#![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
+//!
 //! Typical use:
 //!
 //! ```no_run
@@ -37,6 +41,9 @@ mod client;
 mod config;
 pub mod dvdv;
 mod error;
+// Wire types mirroring the Java side field-for-field; their contract is
+// documented normatively in docs/PROTOCOL.md, which is where it lives.
+#[allow(missing_docs)]
 pub mod protocol;
 mod xta;
 

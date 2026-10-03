@@ -22,6 +22,7 @@ pub enum BridgeErrorKind {
 }
 
 impl BridgeErrorKind {
+    /// Parses a bridge-reported kind string; unknown strings map to Internal.
     pub fn parse(s: &str) -> Self {
         match s {
             "protocol" => Self::Protocol,
@@ -32,6 +33,7 @@ impl BridgeErrorKind {
         }
     }
 
+    /// The wire representation of this kind.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Protocol => "protocol",
@@ -68,12 +70,17 @@ pub enum Error {
     #[error(
         "bridge timed out after {timeout_ms} ms — the intermediary is probably still stamping"
     )]
-    BridgeTimeout { timeout_ms: u64 },
+    BridgeTimeout {
+        /// How long we waited, in milliseconds.
+        timeout_ms: u64,
+    },
 
     /// The bridge reported a structured failure.
     #[error("{kind}: {message}")]
     Bridge {
+        /// Which family of failure the bridge reported.
         kind: BridgeErrorKind,
+        /// Human-readable failure detail.
         message: String,
         /// Raw OSCI feedback rows (`[text, code]`) if the intermediary
         /// rejected the request; the paper trail, as it were.
