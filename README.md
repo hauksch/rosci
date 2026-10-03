@@ -127,14 +127,20 @@ native online client when credentials-based lookup is acceptable.
 
 ## Testing
 
-93 tests: Java unit (18), Rust unit/integration/CLI (65), e2e (5), proptests, doctests
-(2). The e2e suite runs the real binary + real jar against the mock
-intermediary with a per-run generated throwaway PKI. Transport encryption
-is asserted at the byte level: raw wire dumps must be ciphertext (no
-subject, no XTA payload, not even element names), the mock's decrypted
-inner envelopes must contain them, and responses must come back encrypted.
-Content encryption is asserted as a second layer on top. No test ever
-leaves localhost. Details and the honest limitations list:
+93 tests: Java unit (18), Rust unit/integration/CLI (65), e2e (5),
+proptest invariants and doctests. The e2e suite runs the real binary +
+real jar against the mock intermediary with a per-run generated throwaway
+PKI — and every response is *signed* by the mock (XML-DSIG supplier
+signature, RSA-PSS), so the client's automatic signature verification runs
+in every scenario; a tamper mode proves one flipped byte fails loudly.
+Transport encryption is asserted at the byte level: raw wire dumps must be
+ciphertext (no subject, no XTA payload, not even element names), the
+mock's decrypted inner envelopes must contain them, and responses must
+come back encrypted. Content encryption — including a sealed
+`xenc:EncryptedData` block in the canned fetch message — is asserted as a
+second layer on top. No test ever leaves localhost. Measured coverage via
+`make coverage` (Rust 88.0 %, bridge 71.4 %); `make fuzz` smokes the
+response parser with libFuzzer. Details and the honest limitations list:
 [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Mission rules
