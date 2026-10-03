@@ -128,12 +128,13 @@ An audit that only lists virtues is a brochure. Known limits, in the open:
    `--insecure-transport` remains for focused content-level tests.
 2. **PIN handling.** PKCS#12 PINs travel as strings from flags/env/file
    into the bridge via stdio JSON. They are never written to disk or logs,
-   and the bridge process lives exactly as long as the CLI — but they are
-   not zeroized memory, and PINs supplied via environment variables are
-   readable from `/proc/<pid>/environ` by the same user for the lifetime
-   of the process. If your threat model includes core dumps or process
-   introspection, file a feature request (or a patch; patches age better
-   than requests).
+   and the bridge process lives exactly as long as the CLI. Rust-side
+   copies are zeroized on drop (`zeroize` crate); what cannot be scrubbed
+   is the JVM-side string residency inside the bridge and the environment
+   variable itself (readable from `/proc/<pid>/environ` by the same user
+   for the process lifetime). If your threat model includes core dumps or
+   process introspection, file a feature request (or a patch; patches age
+   better than requests).
 3. **DVDV is file-based.** Recipient resolution uses a local JSON extract
    (`--dvdv-file`, `rosci dvdv find`) rather than the online FITKO REST
    service, which requires OAuth client credentials and would leave

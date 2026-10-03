@@ -321,8 +321,40 @@ public final class OsciOps
     versions.put("osci_library", osciLibraryVersion());
     versions.put("bouncycastle",
                  new org.bouncycastle.jce.provider.BouncyCastleProvider().getVersionStr());
+    versions.put("jar_sha256", jarSha256());
     result.versions = versions;
     return result;
+  }
+
+  /**
+   * SHA-256 of the running bridge jar — a per-invocation audit trail: what
+   * ran is answerable, not just what was supposed to run.
+   */
+  private static String jarSha256()
+  {
+    try
+    {
+      java.net.URL jar = Bridge.class.getProtectionDomain()
+                                    .getCodeSource()
+                                    .getLocation();
+      if (jar == null)
+        return "unknown";
+      try (InputStream in = jar.openStream();
+           java.security.DigestInputStream din = new java.security.DigestInputStream(
+             in, java.security.MessageDigest.getInstance("SHA-256")))
+      {
+        byte[] sink = new byte[8192];
+        while (din.read(sink) > -1)
+        {
+          // Digest only; the bytes themselves are nobody's business.
+        }
+        return java.util.HexFormat.of().formatHex(din.getMessageDigest().digest());
+      }
+    }
+    catch (Exception e)
+    {
+      return "unknown";
+    }
   }
 
   private static String osciLibraryVersion()

@@ -82,9 +82,15 @@ struct ConnArgs {
 
     /// Test mode: disable SOAP-transport encryption/signatures so local
     /// mock intermediaries can parse envelopes. Content crypto stays on.
-    /// Only ever point this at endpoints you own.
+    /// Refuses non-loopback intermediary hosts unless
+    /// --insecure-transport-any-host is also given.
     #[arg(long)]
     insecure_transport: bool,
+
+    /// Explicitly allow --insecure-transport against non-loopback hosts.
+    /// If you type this flag, you are the audit finding.
+    #[arg(long, requires = "insecure_transport")]
+    insecure_transport_any_host: bool,
 
     /// Path to the osci-bridge.jar.
     #[arg(long, env = "OSCI_BRIDGE_JAR", default_value = "osci-bridge.jar")]
@@ -244,21 +250,69 @@ fn init_tracing(verbose: u8) {
 
 // ------------------------------------------------------------------ shared
 
-fn load_pin(conn: &ConnArgs) -> Result<String, Error> {
+/// --insecure-transport is a test-mode footgun; the guard makes sure it can
+/// only fire at loopback endpoints unless the user takes explicit
+/// responsibility with --insecure-transport-any-host.
+fn check_insecure_guard(conn: &ConnArgs, url: &str) -> Result<(), Error> {
+    if !conn.insecure_transport || conn.insecure_transport_any_host {
+        return Ok(());
+    }
+    if url_host_is_loopback(url) {
+        return Ok(());
+    }
+    Err(Error::Config(format!(
+        "--insecure-transport refuses non-loopback intermediaries ({url}). \
+         Point at localhost, or pass --insecure-transport-any-host if this \
+         is a test endpoint you control."
+    )))
+}
+
+fn url_host_is_loopback(url: &str) -> bool {
+    let after_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
+    let host_port = after_scheme.split(['/']).next().unwrap_or(after_scheme);
+    // IPv6 forms come bracketed; the port (if any) follows the bracket.
+    let host = if let Some(rest) = host_port.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest)
+    } else {
+        host_port
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(host_port)
+    };
+    if host.eq_ignore_ascii_case("localhost") || host.eq_ignore_ascii_case("::1") {
+        return true;
+    }
+    // 127.0.0.0/8: four numeric labels, first one 127 — and nothing bolted
+    // on afterwards ("127.0.0.1.evil.example" need not apply).
+    let labels: Vec<&str> = host.split('.').collect();
+    labels.len() == 4
+        && labels[0] == "127"
+        && labels[1..]
+            .iter()
+            .all(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The PIN is wrapped in Zeroizing so every Rust-side copy is scrubbed on
+/// drop. What cannot be scrubbed: the JVM-side string residency inside the
+/// bridge (documented in docs/AUDIT.md) — the Rust side of the pipe can at
+/// least keep its own house in order.
+fn load_pin(conn: &ConnArgs) -> Result<zeroize::Zeroizing<String>, Error> {
     if let Some(pin) = &conn.pin {
-        return Ok(pin.clone());
+        return Ok(zeroize::Zeroizing::new(pin.clone()));
     }
     if let Some(file) = &conn.pinfile {
         let pin = std::fs::read_to_string(file)
             .map_err(|e| Error::Config(format!("cannot read pin file {}: {e}", file.display())))?;
-        return Ok(pin.trim().to_string());
+        return Ok(zeroize::Zeroizing::new(pin.trim().to_string()));
     }
-    std::env::var(&conn.pinenv).map_err(|_| {
-        Error::Config(format!(
-            "no PIN: set ${}, or use --pinfile / --pin",
-            conn.pinenv
-        ))
-    })
+    std::env::var(&conn.pinenv)
+        .map(zeroize::Zeroizing::new)
+        .map_err(|_| {
+            Error::Config(format!(
+                "no PIN: set ${}, or use --pinfile / --pin",
+                conn.pinenv
+            ))
+        })
 }
 
 fn bridge_config(conn: &ConnArgs) -> BridgeConfig {
@@ -269,6 +323,9 @@ fn bridge_config(conn: &ConnArgs) -> BridgeConfig {
 }
 
 fn build_client(conn: &ConnArgs, intermediary: Option<Intermediary>) -> Result<OsciClient, Error> {
+    if let Some(intermediary) = &intermediary {
+        check_insecure_guard(conn, &intermediary.url)?;
+    }
     let pin = load_pin(conn)?;
     let identity = Identity::from_p12_files(
         conn.cert
@@ -349,6 +406,9 @@ fn cmd_send(args: SendArgs) -> Result<(), Error> {
 
     // Flag-provided intermediary wins over DVDV (power users, testing).
     let intermediary = conn_intermediary(&args.conn)?.or(dvdv_intermediary);
+    if let Some(intermediary) = &intermediary {
+        check_insecure_guard(&args.conn, &intermediary.url)?;
+    }
 
     let identity = Identity::from_p12_files(
         args.conn
@@ -688,6 +748,41 @@ mod proptests {
             prop_assert!(!once.is_empty());
             prop_assert!(once.chars().all(|c|
                 c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')));
+        }
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::url_host_is_loopback;
+
+    #[test]
+    fn loopback_urls_are_recognized_in_all_their_forms() {
+        for url in [
+            "http://127.0.0.1:39471/entry",
+            "http://localhost:8080/x",
+            "http://localhost/x",
+            "https://127.42.0.1:1/",
+            "http://[::1]:9000/entry",
+            "http://[::1]/",
+        ] {
+            assert!(url_host_is_loopback(url), "{url} should be loopback");
+        }
+    }
+
+    #[test]
+    fn everything_else_is_not_loopback() {
+        for url in [
+            "http://gov.test.osci.de/osci-manager-entry/externalentry",
+            "https://intermediary.example/entry",
+            "http://10.0.0.1:1/",             // private, but not loopback
+            "http://192.168.1.10/entry",      // same
+            "http://127.0.0.1.evil.example/", // loopback as a subdomain — nice try
+        ] {
+            assert!(
+                !url_host_is_loopback(url),
+                "{url} must not pass as loopback"
+            );
         }
     }
 }

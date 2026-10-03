@@ -195,6 +195,23 @@ fn send_fetch_status_against_mock_intermediary() {
         return;
     };
 
+    // --- version handshake includes the jar fingerprint -----------------
+    let version_out = e2e
+        .rosci()
+        .arg("version")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let version_text = String::from_utf8_lossy(&version_out);
+    assert!(
+        version_text.lines().any(|l| {
+            l.starts_with("jar_sha256") && l[l.find(' ').unwrap_or(0)..].trim().len() == 64
+        }),
+        "version must report a 64-hex jar fingerprint: {version_text}"
+    );
+
     // --- send via DVDV resolution, full crypto path ---------------------
     let output = e2e
         .rosci()
