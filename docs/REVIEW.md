@@ -80,3 +80,20 @@ fetchDelivery and a canned ProcessCardBundle on fetchProcessCard, and the
 e2e suite asserts the fetched XTA byte-for-byte on disk, the `--json`
 shape, and the Laufzettel fields through both plain and encrypted pipes.
 Total: 67 → 85 tests, `make lint test audit` green.
+
+## Quality pass result (2026-10-03)
+
+The four quality tracks (measured coverage, crypto/logic parity, security
+polish, gates & hygiene) are complete; `make check` is green end to end.
+C5 (coverage tooling) closed by `make coverage` with recorded baselines;
+C1/C4/B2 closed; the coverage E-items all covered. New findings from this
+pass, for the record:
+
+- The strict-compiler gate paid for itself immediately: missing
+  `serialVersionUID`, a redundant cast, and usage of the library's
+  deprecated PKCS#1 v1.5 constants (now unreachable — PSS is the only
+  path). None of these were visible without `-Xlint:all -Werror`.
+- JDK XML-DSig interop notes now documented in `ResponseSigner` (header
+  doc): the JDK factory rejects rsa-sha256 `SignatureMethod` on this JVM
+  (rsa-sha1 works for digest harvesting), and `Id` attributes must be
+  registered via `setIdAttributeNS` for `#id` reference resolution.
