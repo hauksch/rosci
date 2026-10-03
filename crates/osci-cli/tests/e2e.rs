@@ -25,6 +25,10 @@ struct MockIntermediary {
 
 impl MockIntermediary {
     fn start(dump_dir: &Path) -> Option<Self> {
+        Self::start_with(dump_dir, &[])
+    }
+
+    fn start_with(dump_dir: &Path, extra_args: &[&str]) -> Option<Self> {
         let jar = repo_root().join("java/osci-mock/target/osci-mock.jar");
         if !jar.is_file() || which_java().is_none() {
             eprintln!("e2e: skipping (mock jar or java missing)");
@@ -36,12 +40,24 @@ impl MockIntermediary {
             .arg(&jar)
             .arg(port.to_string())
             .arg(dump_dir.to_str().unwrap());
-        // With the intermediary key on board, the mock can decrypt
-        // transport-encrypted requests and encrypt responses back.
-        let key = dump_dir.parent().map(|p| p.join("intermed-cipher.key"));
+        // With the intermediary keys on board, the mock decrypts
+        // transport-encrypted requests, encrypts responses back, and signs
+        // every response like a proper intermediary.
+        let pki = dump_dir.parent().map(|p| p.to_path_buf());
+        let key = pki.as_ref().map(|p| p.join("intermed-cipher.key"));
         if let Some(key) = key.filter(|k| k.is_file()) {
             cmd.arg("--key").arg(key);
         }
+        let sign_key = pki.as_ref().map(|p| p.join("intermed-sign.key"));
+        let sign_cert = pki.as_ref().map(|p| p.join("intermed-sign.pem"));
+        if let Some(k) = sign_key.filter(|k| k.is_file()) {
+            cmd.arg("--sign-key").arg(k).arg("--sign-cert").arg(
+                sign_cert
+                    .filter(|c| c.is_file())
+                    .expect("sign cert next to sign key"),
+            );
+        }
+        cmd.args(extra_args);
         let mut child = cmd
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -71,7 +87,7 @@ impl MockIntermediary {
         Some(Self { child, port })
     }
 
-    fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         format!(
             "http://127.0.0.1:{}/osci-manager-entry/externalentry",
             self.port
@@ -300,8 +316,7 @@ fn send_fetch_status_against_mock_intermediary() {
         .get_output()
         .stdout
         .clone();
-    let messages: serde_json::Value =
-        serde_json::from_slice(&json_out).expect("fetch json");
+    let messages: serde_json::Value = serde_json::from_slice(&json_out).expect("fetch json");
     let contents = messages[0]["contents"].as_array().expect("contents");
     assert!(
         !contents.is_empty(),
@@ -327,10 +342,16 @@ fn send_fetch_status_against_mock_intermediary() {
         .as_array()
         .expect("messages array")
         .iter()
-        .find(|m| m["encrypted_contents"].as_array().is_some_and(|c| !c.is_empty()))
+        .find(|m| {
+            m["encrypted_contents"]
+                .as_array()
+                .is_some_and(|c| !c.is_empty())
+        })
         .expect("one message with decrypted encrypted_contents");
     let encrypted = enc_msg["encrypted_contents"].as_array().unwrap();
-    let enc_data = encrypted[0]["data"].as_str().expect("encrypted base64 data");
+    let enc_data = encrypted[0]["data"]
+        .as_str()
+        .expect("encrypted base64 data");
     let enc_decoded = base64::engine::general_purpose::STANDARD
         .decode(enc_data)
         .expect("valid base64");
@@ -548,7 +569,10 @@ fn large_payload_flows_through_both_transports() {
     xml.push_str("</XTA>");
     let big = e2e.workdir.join("gross.xta");
     std::fs::write(&big, xml).unwrap();
-    assert!(big.metadata().unwrap().len() > 1_900_000, "payload must be ~2MB");
+    assert!(
+        big.metadata().unwrap().len() > 1_900_000,
+        "payload must be ~2MB"
+    );
 
     // Plain transport, no content crypto: maximum payload, minimum ceremony.
     e2e.rosci()
@@ -578,4 +602,53 @@ fn large_payload_flows_through_both_transports() {
         .assert()
         .success()
         .stdout(predicate::str::contains("message_id"));
+}
+
+#[test]
+fn tampered_response_signature_is_rejected_loudly() {
+    // A dedicated mock that signs correctly and then flips one byte of the
+    // SignatureValue. The client library verifies automatically; the CLI
+    // must fail with a transport/OSCI exit code and a message naming the
+    // problem — anything else would mean verification is decorative.
+    let pki_dir = tempfile::tempdir().expect("pki tempdir");
+    let status = Command::new(repo_root().join("tests/gen-pki.sh"))
+        .arg(pki_dir.path())
+        .status()
+        .expect("run gen-pki.sh");
+    assert!(status.success(), "PKI generation failed");
+
+    let dump_dir = pki_dir.path().join("dump");
+    std::fs::create_dir_all(&dump_dir).unwrap();
+    std::fs::write(
+        pki_dir.path().join("meldung.xta"),
+        "<?xml version=\"1.0\"?><XTA>signatur-pruefung</XTA>",
+    )
+    .unwrap();
+    let Some(mock) = MockIntermediary::start_with(&dump_dir, &["--tamper-signature"]) else {
+        return;
+    };
+
+    let mut cmd = AssertCommand::cargo_bin("rosci").unwrap();
+    cmd.env(
+        "OSCI_BRIDGE_JAR",
+        repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
+    )
+    .env("OSCI_CERT_PIN", "testpin")
+    .current_dir(pki_dir.path())
+    .arg("send")
+    .arg("meldung.xta")
+    .args(["--to", "cert:recipient-cipher.pem"])
+    .args(["--intermediary", &mock.url()])
+    .args(["--intermediary-cert", "intermed-cipher.pem"])
+    .args(["--cert", "client-sign.p12"])
+    .arg("--insecure-transport")
+    .timeout(Duration::from_secs(180))
+    .assert()
+    .failure()
+    .code(4)
+    .stderr(
+        predicates::str::contains("Signature")
+            .or(predicate::str::contains("signatur"))
+            .or(predicate::str::contains("Signatur")),
+    );
 }

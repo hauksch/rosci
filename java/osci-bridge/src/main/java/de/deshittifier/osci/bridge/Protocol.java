@@ -109,6 +109,7 @@ public final class Protocol
   public static final class Result
   {
     public String message_id; // send
+    public Boolean response_signed; // true when the intermediary signed the response (and it verified)
     public String[][] feedback; // send / fetch / process-card
     public List<FetchedMessage> messages; // fetch
     public List<ProcessCard> process_cards; // process-card

@@ -113,6 +113,8 @@ pub struct ResultMsg {
     #[serde(default)]
     pub message_id: Option<String>,
     #[serde(default)]
+    pub response_signed: Option<bool>,
+    #[serde(default)]
     pub feedback: Option<Vec<Vec<String>>>,
     #[serde(default)]
     pub messages: Option<Vec<FetchedMessage>>,
@@ -140,6 +142,10 @@ pub struct Receipt {
     /// OSCI message id handed out by the intermediary. Quote this in any
     /// follow-up correspondence; it is the Aktenzeichen of your message.
     pub message_id: String,
+    /// Whether the intermediary's response carried a signature — and, since
+    /// the library verifies automatically, one that actually verified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_signed: Option<bool>,
     /// Raw feedback rows from the intermediary, `[text, code]` per row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feedback: Option<Vec<Vec<String>>>,

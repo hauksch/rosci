@@ -199,6 +199,7 @@ fn receipt_serializes_stable_json() {
     use osci::Receipt;
     let receipt = Receipt {
         message_id: "mock-4711".into(),
+        response_signed: Some(true),
         feedback: Some(vec![vec!["alles gut".into(), "0000".into()]]),
     };
     let json = serde_json::to_string(&receipt).unwrap();

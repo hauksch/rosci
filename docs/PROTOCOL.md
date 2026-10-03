@@ -13,7 +13,9 @@ Normative implementations:
 Both sides name fields identically (snake_case). Changing a field name,
 type, or semantics requires bumping the protocol version in both files and
 this document, in the same commit. No exceptions, not even for "small
-clarifications".
+clarifications". **Additive optional fields** (absent-by-default, tolerated
+by the other side's parser) do not bump the version — that is the one
+escape hatch, and `response_signed` was its first customer.
 
 ## Requests
 
@@ -56,12 +58,16 @@ Success:
 
 ```json
 { "id": "r1", "op": "send", "ok": true,
-  "result": { "message_id": "…", "feedback": [["text","0000"]],
+  "result": { "message_id": "…", "response_signed": true, "feedback": [["text","0000"]],
               "messages": [ … ], "process_cards": [ … ], "versions": { … } } }
 ```
 
 `result` fields are op-specific; absent ones are omitted. `messages` and
 `process_cards` shapes mirror `crates/osci/src/protocol.rs`.
+`response_signed` is `true` when the intermediary's response carried a
+signature — since the library verifies automatically, a `true` here means
+a *verified* signature; a tampered signature never reaches the caller as
+success.
 
 Failure:
 

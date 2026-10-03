@@ -115,12 +115,17 @@ response back to it. The test then asserts on the byte-exact wire dumps:
 
 An audit that only lists virtues is a brochure. Known limits, in the open:
 
-1. **Transport signatures on responses.** Transport *encryption* is fully
-   exercised bidirectionally (see above). Transport-level XML signatures,
-   however, are only exercised on the client's outgoing side; the mock's
-   responses are encrypted but unsigned, which the client's parser
-   accepts. `--insecure-transport` remains available for focused
-   content-level tests and is documented as test-only.
+1. **Transport signatures on responses — closed (2026-10-03).** The mock
+   now signs every response with the intermediary's signature key
+   (`ResponseSigner`: inclusive-C14N part digests via the JDK XML-DSig
+   engine, RSA-PSS/SHA-256 over the SignedInfo, attachments as `cid:`
+   references, `IntermediaryCertificates` header carrying the signing
+   cert). The client library's automatic verification runs on every e2e
+   exchange, and a dedicated tamper test (`--tamper-signature`) proves a
+   one-byte SignatureValue flip fails loudly (exit 4). The e2e mock arms
+   signing by default, so every transport-encrypted, content-encrypted
+   and large-payload test also carries verified supplier signatures.
+   `--insecure-transport` remains for focused content-level tests.
 2. **PIN handling.** PKCS#12 PINs travel as strings from flags/env/file
    into the bridge via stdio JSON. They are never written to disk or logs,
    and the bridge process lives exactly as long as the CLI — but they are

@@ -69,6 +69,9 @@ public final class MockIntermediary
 
   private static Path dumpDir = null;
   private static TransportCrypto crypto = null;
+  private static ResponseSigner signer = null;
+  /** Test mode: corrupt the response signature to exercise the client's verification failure path. */
+  private static boolean tamperSignature = false;
   private static final java.util.concurrent.atomic.AtomicReference<java.security.cert.X509Certificate>
     LAST_CLIENT_CERT = new java.util.concurrent.atomic.AtomicReference<>();
 
@@ -76,16 +79,38 @@ public final class MockIntermediary
   {
     if (args.length < 1)
     {
-      System.err.println("usage: MockIntermediary <port> [dumpDir] [--key <pkcs8.pem>]");
+      System.err.println(
+        "usage: MockIntermediary <port> [dumpDir] [--key <pkcs8.pem>] [--sign-key <pkcs8.pem> --sign-cert <cert.pem>]");
       System.exit(2);
     }
     int port = Integer.parseInt(args[0]);
+    for (String arg : args)
+    {
+      if ("--tamper-signature".equals(arg))
+      {
+        tamperSignature = true;
+        System.err.println("mock: signature tampering armed (responses will fail verification)");
+      }
+    }
     for (int i = 1 ; i < args.length - 1 ; i++)
     {
       if ("--key".equals(args[i]))
       {
         crypto = TransportCrypto.fromPkcs8Pem(Path.of(args[i + 1]));
         System.err.println("mock: secure mode armed (intermediary key loaded)");
+      }
+      else if ("--sign-key".equals(args[i]))
+      {
+        Path key = Path.of(args[i + 1]);
+        // The matching certificate is expected right after --sign-cert.
+        for (int j = 1 ; j < args.length - 1 ; j++)
+        {
+          if ("--sign-cert".equals(args[j]))
+          {
+            signer = ResponseSigner.fromPem(key, Path.of(args[j + 1]));
+            System.err.println("mock: response signing armed (supplier key loaded)");
+          }
+        }
       }
     }
     if (args.length > 1 && !args[1].startsWith("--"))
@@ -412,7 +437,7 @@ public final class MockIntermediary
 
   private static String envelope(String bodyContent, String headerExtras, String xsdName,
                                  String seqAttr, String conversationId, String echoedChallenge,
-                                 List<String[]> extraParts)
+                                 List<String[]> extraParts) throws IOException
   {
     String freshChallenge = b64("challenge-" + RANDOM.nextInt(1_000_000));
     String responseElement = (echoedChallenge == null || echoedChallenge.isBlank())
@@ -439,6 +464,22 @@ public final class MockIntermediary
         """.formatted(TransportCrypto.DS_NS, SOAP_NS, OSCI_NS, TransportCrypto.XENC_NS,
                       schemaLocation, conversationId, seqPart, responseElement,
                       freshChallenge, headerExtras, bodyContent);
+
+    // Signed dialect: sign before MIME framing, so the Content-Length
+    // below covers the signed envelope (attachments included as cid refs).
+    if (signer != null)
+    {
+      xml = signer.sign(xml, extraParts);
+      if (tamperSignature)
+      {
+        // Flip the first base64 character of the SignatureValue: still
+        // well-formed XML, cryptographically garbage. The client's
+        // automatic verification must reject this loudly.
+        int pos = xml.indexOf("<ds:SignatureValue>") + "<ds:SignatureValue>".length();
+        char flipped = xml.charAt(pos) == 'A' ? 'B' : 'A';
+        xml = xml.substring(0, pos) + flipped + xml.substring(pos + 1);
+      }
+    }
 
     // The client's response parser insists on full MIME framing — headers,
     // boundary, part headers, exact Content-Length. The request dump is the

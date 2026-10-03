@@ -125,6 +125,7 @@ public final class OsciOps
       Protocol.Result result = new Protocol.Result();
       result.message_id = rsp.getMessageId();
       result.feedback = rsp.getFeedback();
+      result.response_signed = rsp.isSigned();
       return result;
     }
     catch (IOException e)
@@ -133,7 +134,8 @@ public final class OsciOps
     }
     catch (OSCIException | GeneralSecurityException e)
     {
-      throw new BridgeException(BridgeException.OSCI, e.getMessage());
+      throw new BridgeException(BridgeException.OSCI,
+                                  e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
     }
   }
 
@@ -170,6 +172,7 @@ public final class OsciOps
 
       Protocol.Result result = new Protocol.Result();
       result.feedback = rsp.getFeedback();
+      result.response_signed = rsp.isSigned();
       List<Protocol.FetchedMessage> messages = new ArrayList<>();
 
       ContentContainer[] containers = rsp.getContentContainer();
@@ -222,7 +225,8 @@ public final class OsciOps
     }
     catch (OSCIException | GeneralSecurityException e)
     {
-      throw new BridgeException(BridgeException.OSCI, e.getMessage());
+      throw new BridgeException(BridgeException.OSCI,
+                                  e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
     }
   }
 
@@ -260,6 +264,7 @@ public final class OsciOps
 
       Protocol.Result result = new Protocol.Result();
       result.feedback = rsp.getFeedback();
+      result.response_signed = rsp.isSigned();
       result.process_cards = new ArrayList<>();
       ProcessCardBundle[] bundles = rsp.getProcessCardBundles();
       if (bundles != null)
@@ -299,7 +304,8 @@ public final class OsciOps
     }
     catch (OSCIException | GeneralSecurityException e)
     {
-      throw new BridgeException(BridgeException.OSCI, e.getMessage());
+      throw new BridgeException(BridgeException.OSCI,
+                                  e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
     }
   }
 

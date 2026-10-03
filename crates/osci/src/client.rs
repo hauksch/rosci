@@ -320,6 +320,7 @@ impl SendBuilder<'_> {
         })?;
         Ok(Receipt {
             message_id,
+            response_signed: result.response_signed,
             feedback: result.feedback,
         })
     }
