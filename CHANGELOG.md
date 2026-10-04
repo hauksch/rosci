@@ -31,6 +31,16 @@ versions are internal milestones, not releases to a registry.
   opt-in exception (`ROSCI_INTEROP=1`, never in `make test`/`check`).
 
 ### Fixed
+- **DER certificate files failed with a UTF-8 riddle.** `--intermediary-cert`,
+  `--to cert:…` and `--tls-ca` read their files as UTF-8 text, so a
+  DER-encoded `.cer` (OpenSSL's favorite export format) died with
+  `stream did not contain valid UTF-8` — despite the API docs promising
+  "PEM or DER". All three now share one reader
+  (`osci::read_certificate_file`): PEM/UTF-8 passes through, binary DER
+  is base64-wrapped for the bridge (which accepts bare DER), and binary
+  that is neither is rejected at config parse with the file and its
+  first byte named. Verified live against gov.test.osci.de with DER on
+  both hops.
 - **`make` was unusable from inside sandboxed app trees** (e.g. the ZCode
   app): such launchers set `PR_SET_NO_NEW_PRIVS` on their whole process
   tree; the flag is inherited and silently disables setuid elevation, so

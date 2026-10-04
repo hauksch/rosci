@@ -49,7 +49,7 @@ mod xta;
 
 pub use bridge::{BridgeConfig, BridgeHandle};
 pub use client::{default_jar_path, resolve_dvdv, FetchQuery, OsciClient, Recipient, SendBuilder};
-pub use config::{Identity, Intermediary, Tls};
+pub use config::{read_certificate_file, Identity, Intermediary, Tls};
 pub use dvdv::{DvdvDirectory, DvdvEntry, FileDvdv};
 pub use error::{BridgeErrorKind, Error};
 pub use protocol::{FetchedContent, FetchedMessage, ProcessCard, Receipt, VersionInfo};

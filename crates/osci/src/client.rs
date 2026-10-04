@@ -260,12 +260,7 @@ impl Recipient {
     /// Loads a recipient from a cipher certificate file (PEM or DER).
     pub fn from_cipher_cert_file(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
-        let pem = std::fs::read_to_string(path).map_err(|e| {
-            Error::Config(format!(
-                "cannot read recipient certificate {}: {e}",
-                path.display()
-            ))
-        })?;
+        let pem = crate::read_certificate_file(path, "recipient certificate")?;
         Ok(Self {
             cipher_cert: pem,
             signature_cert: None,

@@ -82,6 +82,12 @@ Exit codes: `0` ok · `2` usage/config · `3` DVDV miss · `4` transport/OSCI
 rejection · `5` crypto · `6` bridge/internal. Shell scripts may finally
 branch on something other than hope.
 
+Certificate files — `--intermediary-cert`, `--to cert:…`, `--tls-ca` —
+may be **PEM or binary DER**: OpenSSL's favorite `.cer` export works
+as-is (binary DER is base64-wrapped for the bridge, which accepts bare
+DER). A file that is neither fails at config parse (exit 2) with the
+file named and its first byte reported — not with a UTF-8 riddle.
+
 ## DVDV
 
 The DVDV (Deutsches Verwaltungsdiensteverzeichnis — a directory of

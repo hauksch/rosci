@@ -1,5 +1,7 @@
 //! Configuration value types: intermediary, identity, TLS knobs.
 
+use std::path::Path;
+
 use zeroize::Zeroizing;
 
 use crate::error::Error;
@@ -102,10 +104,10 @@ pub struct Tls {
 }
 
 impl Tls {
-    /// Adds a trust anchor from a file (PEM or DER).
+    /// Adds a trust anchor from a file (PEM or DER; see
+    /// [`read_certificate_file`]).
     pub fn with_trust_anchor_file(mut self, path: &std::path::Path) -> Result<Self, Error> {
-        let raw = std::fs::read_to_string(path)
-            .map_err(|e| Error::Config(format!("cannot read {}: {e}", path.display())))?;
+        let raw = read_certificate_file(path, "TLS trust anchor")?;
         self.trust_anchors.push(raw);
         Ok(self)
     }
@@ -122,6 +124,31 @@ impl Tls {
             connect_timeout_ms: self.connect_timeout_ms,
             read_timeout_ms: self.read_timeout_ms,
         }
+    }
+}
+
+/// Reads a certificate file for the bridge, which consumes PEM *or*
+/// bare-base64-DER strings (`CryptoMaterial.parseCertificate`).
+///
+/// UTF-8 text passes through unchanged (PEM, with or without headers).
+/// Binary that starts like a DER SEQUENCE (`0x30`) is handed over as
+/// base64 — an OpenSSL `.cer` works as-is, as this API has always
+/// promised. Anything else binary is named as such; the days of
+/// "stream did not contain valid UTF-8" as a diagnosis are over.
+pub fn read_certificate_file(path: &Path, what: &str) -> Result<String, Error> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| Error::Config(format!("cannot read {what} {}: {e}", path.display())))?;
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(text),
+        Err(e) if e.as_bytes().first() == Some(&0x30) => {
+            use base64::Engine as _;
+            Ok(base64::engine::general_purpose::STANDARD.encode(e.as_bytes()))
+        }
+        Err(e) => Err(Error::Config(format!(
+            "{what} {} is neither PEM nor DER (first byte is 0x{:02x})",
+            path.display(),
+            e.as_bytes().first().copied().unwrap_or(0)
+        ))),
     }
 }
 
@@ -149,6 +176,57 @@ mod tests {
             .with_trust_anchor_file(std::path::Path::new("/gibt-es-nicht/ca.pem"))
             .unwrap_err();
         assert!(matches!(err, Error::Config(ref c) if c.contains("cannot read")));
+    }
+
+    #[test]
+    fn read_certificate_file_passes_pem_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let pem = dir.path().join("r.pem");
+        std::fs::write(
+            &pem,
+            "-----BEGIN CERTIFICATE-----\nZm9v\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        let read = read_certificate_file(&pem, "recipient certificate").unwrap();
+        assert!(read.contains("BEGIN CERTIFICATE"));
+    }
+
+    #[test]
+    fn read_certificate_file_hands_der_over_as_base64() {
+        let dir = tempfile::tempdir().unwrap();
+        let der = dir.path().join("r.cer");
+        std::fs::write(&der, [0x30u8, 0x82, 0x01, 0x0a, 0xde, 0xad, 0xbe, 0xef]).unwrap();
+        let read = read_certificate_file(&der, "recipient certificate").unwrap();
+        use base64::Engine as _;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&read)
+            .expect("result is bare base64");
+        assert_eq!(decoded, [0x30u8, 0x82, 0x01, 0x0a, 0xde, 0xad, 0xbe, 0xef]);
+        assert!(
+            !read.contains('\n'),
+            "wire format is whitespace-free base64"
+        );
+    }
+
+    #[test]
+    fn read_certificate_file_names_other_binary_as_such() {
+        let dir = tempfile::tempdir().unwrap();
+        let junk = dir.path().join("r.bin");
+        std::fs::write(&junk, [0xff, 0xd8, 0xff, 0x00, 0x13]).unwrap(); // no 0x30 lead
+        let err = read_certificate_file(&junk, "recipient certificate").unwrap_err();
+        assert!(matches!(err, Error::Config(ref c) if c.contains("neither PEM nor DER")));
+    }
+
+    #[test]
+    fn read_certificate_file_reports_missing_file_with_its_role() {
+        let err = read_certificate_file(
+            std::path::Path::new("/gibt-es-nicht/r.cer"),
+            "intermediary certificate",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::Config(ref c) if c.contains("intermediary certificate") && c.contains("cannot read"))
+        );
     }
 
     #[test]

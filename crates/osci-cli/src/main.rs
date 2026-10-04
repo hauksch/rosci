@@ -381,12 +381,7 @@ fn build_client(conn: &ConnArgs, intermediary: Option<Intermediary>) -> Result<O
 fn conn_intermediary(conn: &ConnArgs) -> Result<Option<Intermediary>, Error> {
     match (&conn.intermediary, &conn.intermediary_cert) {
         (Some(url), Some(cert)) => {
-            let pem = std::fs::read_to_string(cert).map_err(|e| {
-                Error::Config(format!(
-                    "cannot read intermediary cert {}: {e}",
-                    cert.display()
-                ))
-            })?;
+            let pem = osci::read_certificate_file(cert, "intermediary certificate")?;
             Ok(Some(Intermediary::new(url.clone(), pem)))
         }
         (Some(_), None) => Err(Error::Config(

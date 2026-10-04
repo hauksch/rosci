@@ -214,10 +214,13 @@ interop suite (`crates/osci-cli/tests/interop.rs`, `make interop`):
   demo CA. The demo `.p12` keystores use **RC2-40-CBC legacy
   encryption** — JDK 21 reads them natively; OpenSSL 3 needs `-legacy`
   to inspect them.
-- **File format matters:** the GitLab `.cer` files are DER; the Rust CLI
-  reads certificate files as UTF-8 text, so the vendored fixtures are
-  **PEM conversions** (`openssl x509 -inform der`), pinned by
-  `SHA256SUMS` next to them.
+- **File format matters:** the GitLab `.cer` files are DER; the CLI of
+  the time read certificate files as UTF-8 text and failed with a
+  UTF-8 riddle, so the vendored fixtures are **PEM conversions**
+  (`openssl x509 -inform der`), pinned by `SHA256SUMS` next to them.
+  (Fixed since: `rosci` now accepts PEM *and* binary DER everywhere —
+  DER is base64-wrapped for the bridge, which accepts bare DER; the
+  fixtures stay PEM because they are pinned and human-checkable.)
 
 Remaining open item, pending a certificate: **is a DOI test identity
 accepted?** The suite has the rung built in (`ROSCI_INTEROP_CERT` +
