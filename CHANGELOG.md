@@ -17,6 +17,19 @@ versions are internal milestones, not releases to a registry.
   production). Mission rule 4 now names this as the single sanctioned
   opt-in exception (`ROSCI_INTEROP=1`, never in `make test`/`check`).
 
+### Fixed
+- **`make` was unusable from inside sandboxed app trees** (e.g. the ZCode
+  app): such launchers set `PR_SET_NO_NEW_PRIVS` on their whole process
+  tree; the flag is inherited and silently disables setuid elevation, so
+  rootless podman's `newuidmap` got EPERM writing the `uid_map`
+  ("Operation not permitted" on every container target, Error 125). The
+  Makefile now detects the flag and, when it is set, routes podman through
+  the user-level API service (`podman.socket`, exec'd by the user manager
+  without the flag) as a remote client — no capabilities needed locally.
+  Scoped so it cannot misfire: rootless podman only (root and docker never
+  needed `newuidmap`), only when `CONTAINER_HOST` is not already set, with
+  an actionable parse-time error if the socket is not listening.
+
 ## [0.3.1] — 2026-10-04 — code-review fixes
 
 A second full review (ledger: `docs/REVIEW.md`, section F) found three

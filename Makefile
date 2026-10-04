@@ -19,6 +19,29 @@ IMAGE          := osci-deshittifier-builder:1
 HOST_UID       := $(shell id -u)
 HOST_GID       := $(shell id -g)
 
+# Rootless podman needs newuidmap, and newuidmap needs setuid — which dies
+# silently in process trees marked PR_SET_NO_NEW_PRIVS (inherited from
+# launchers like the ZCode app; descendants can never clear the flag).
+# Symptom: "newuidmap: write to uid_map failed: Operation not permitted" on
+# every container target. When we detect the flag we don't fight it: the
+# namespace work moves into the user-level API service (podman.socket, exec'd
+# by the user manager, which carries no such flag) and this tree keeps only
+# the capability-free remote client. Root has CAP_SETUID regardless of the
+# flag, and docker never needed newuidmap — so this is podman-only.
+ifeq ($(shell awk '/^NoNewPrivs:/{print $$2}' /proc/self/status),1)
+ifneq ($(HOST_UID),0)
+ifneq ($(findstring podman,$(OCI)),)
+ifeq ($(origin CONTAINER_HOST),undefined)
+  export CONTAINER_HOST := unix:///run/user/$(HOST_UID)/podman/podman.sock
+  ifeq ($(wildcard /run/user/$(HOST_UID)/podman/podman.sock),)
+    $(error NoNewPrivileges=1 in this process tree (inherited from the launching app) and podman.socket is not listening. Enable it once: systemctl --user enable --now podman.socket — or run make from a terminal outside the flagged app)
+  endif
+endif
+  OCI := $(OCI) --remote
+endif
+endif
+endif
+
 # Rootless podman maps container-root to the invoking user (no --user needed,
 # and passing one would land on a subuid that cannot write to the bind mount).
 # Real docker needs the explicit --user so artifacts don't come out root-owned.
@@ -65,6 +88,10 @@ test: image ## Run all tests (Java unit + Rust unit/integration/e2e)
 	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml test
 	$(IN_CONTAINER) $(MVN) -f java/osci-mock/pom.xml package
 	$(IN_CONTAINER) cargo test --workspace
+
+.PHONY: interop
+interop: build ## Opt-in interop suite — CONTACTS gov.test.osci.de (real intermediary; functional tests only, never part of test/check)
+	$(IN_CONTAINER) bash -c 'ROSCI_INTEROP=1 cargo test -p osci-cli --test interop -- --nocapture'
 
 .PHONY: lint
 lint: image ## Rustfmt + clippy -D warnings + maven verify
