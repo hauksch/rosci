@@ -51,10 +51,11 @@ Test inventory:
 
 | suite | what it proves |
 |---|---|
-| `osci-bridge` JUnit (24) | JSON contract, PKI parsing, sign/verify + decrypt round-trips, request loop, feedback-row mapping, byte-exact fetch content, streamed request transport |
-| `osci` unit/integration (44) | protocol serde, bridge lifecycle (timeout/garbage/death/desync), client flows incl. protocol-version handshake, DVDV resolution, XTA sniffing |
+| `osci-bridge` JUnit (28) | JSON contract, PKI parsing, sign/verify + decrypt round-trips, request loop, feedback-row mapping (incl. 3800-warning tolerance), selection-mode mapping, byte-exact fetch content, streamed request transport |
+| `osci` unit/integration (50) | protocol serde, bridge lifecycle (timeout/garbage/death/desync), client flows incl. protocol-version handshake, DVDV resolution, XTA sniffing, TLS client bundle wiring |
 | `osci-cli` (29) | argument plumbing, output shape, exit codes, jar resolution, loopback guard, fetch write safety |
-| e2e (5) | the real binary + real jar + mock intermediary: plain-transport send/status/fetch; **transport-encrypted send + status with ciphertext assertions**; failure exit codes; large payload; tampered supplier signature |
+| e2e (7) | the real binary + real jar + mock intermediary: plain-transport send/status/fetch; **transport-encrypted send + status with ciphertext assertions**; failure exit codes; large payload; tampered supplier signature; attachments; **schema validation of captured wire traffic** |
+| interop (11, opt-in, live) | the real binary + real jar + the OSCI-Manager test intermediary: send/fetch round trips (incl. attachments and MessageMetaData), EFFI chunked transfer byte-exact, postbox isolation, `--all` warning semantics |
 
 The e2e suite generates its own throwaway PKI per run (`tests/gen-pki.sh`)
 and talks only to `127.0.0.1`. No test touches any external service; the
@@ -86,21 +87,33 @@ with zero crashes on its first run.
 A manual probe verified a **5 MB XTA** through both the plain and the
 fully-encrypted (transport + content signature + content encryption)
 paths without chunking; a ~2 MB regression case runs in the e2e suite.
-Chunked transfer (`PartialStoreDelivery`, required by the OSCI standard
-beyond an intermediary-specific threshold) is **not implemented** in the
-bridge — payloads beyond what a plain `StoreDelivery` accepts would fail
-loudly rather than silently truncate. The threshold is
-intermediary-specific and untested beyond 5 MB; if your use case needs
-more, that is the feature request to file.
+EFFI chunked transfer (`PartialStoreDelivery`, the standard's answer for
+intermediary-specific size thresholds) is implemented as an **opt-in**:
+`rosci send --chunk-size-kb N` serializes the fully built StoreDelivery,
+ships it in N-KB chunks and lets the intermediary reassemble
+(live-verified byte-exact against the OSCI-Manager test instance,
+docs/TEST-INFRASTRUCTURE.md). `rosci fetch --chunk-size-kb N` pulls
+chunked-stored messages via PartialFetchDelivery for intermediaries that
+only serve chunks — the OSCI-Manager serves them reassembled via plain
+fetch instead (its partial-fetch variant answered 9811; see
+docs/TEST-INFRASTRUCTURE.md). Without the flag, oversized payloads fail
+loudly rather than silently truncate.
 
 ### Reproducible jars
 
-`java/*/pom.xml` pin `project.build.outputTimestamp`; two clean builds of
-the same tree produce **byte-identical** bridge jars (verified 2026-10-04:
-`1d4f40d86469a62925674c26073ea5c366e1a8a56780474f81ae52848f72c830` twice).
-The Rust release binary is deterministic within a pinned container for the
-same reason: same tree, same toolchain, same bytes. What ran is what the
-sources say — the checksum proves it after the fact.
+`java/*/pom.xml` pin `project.build.outputTimestamp`; builds of the same
+tree are **byte-identical per build path** (verified 2026-10-04, after
+the interop/metadata bridge changes): `mvn clean package` →
+`434eef4f772a56a5eaa4fb2bf4979ce97d700887a7855d8915720d08f5def238`
+(twice), incremental `mvn package` →
+`0e3a11b3880759ff8f387578a0c13a14f58a908abbe6530e43abfce56426fda5`
+(twice). Clean and incremental differ from each other (shade-plugin
+archive ordering against a dirty vs fresh `target/`) — so release
+hashes are recorded from **clean** builds, and `make release` should
+stay the single source of published artifacts. The Rust release binary
+is deterministic within a pinned container for the same reason: same
+tree, same toolchain, same bytes. What ran is what the sources say —
+the checksum proves it after the fact.
 
 ### Strict compilers
 

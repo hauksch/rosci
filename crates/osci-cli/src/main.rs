@@ -148,6 +148,15 @@ struct SendArgs {
     #[arg(long, value_name = "KB")]
     chunk_size_kb: Option<u64>,
 
+    /// XTA MessageMetaData author identifier (Ergänzung; e.g.
+    /// `ags:NNNNNNNNNNN`).
+    #[arg(long, value_name = "ID")]
+    metadata_author: Option<String>,
+
+    /// XTA MessageMetaData reader identifier.
+    #[arg(long, value_name = "ID")]
+    metadata_reader: Option<String>,
+
     /// Send unsigned. Bold.
     #[arg(long)]
     no_sign: bool,
@@ -503,6 +512,12 @@ fn cmd_send(args: SendArgs) -> Result<(), Error> {
     if let Some(kb) = args.chunk_size_kb {
         send = send.chunk_size_kb(kb);
     }
+    if let Some(author) = &args.metadata_author {
+        send = send.metadata_author(author.clone());
+    }
+    if let Some(reader) = &args.metadata_reader {
+        send = send.metadata_reader(reader.clone());
+    }
     if let Some(subject) = &args.subject {
         send = send.subject(subject.clone());
     }
@@ -673,6 +688,8 @@ fn cmd_version(args: VersionArgs) -> Result<(), Error> {
                 content: None,
                 attachments: None,
                 chunk_size_kb: None,
+                metadata_author: None,
+                metadata_reader: None,
                 sign: None,
                 encrypt: None,
                 insecure_transport: None,

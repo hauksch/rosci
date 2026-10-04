@@ -58,6 +58,11 @@
       <artifactId>osci-bibliothek</artifactId>
       <version>${osci.version}</version>
     </dependency>
+    <!-- MessageMetaData custom SOAP header (Ergänzung; BOM-managed). -->
+    <dependency>
+      <groupId>de.osci</groupId>
+      <artifactId>extension-message-meta-data</artifactId>
+    </dependency>
     <dependency>
       <groupId>com.google.code.gson</groupId>
       <artifactId>gson</artifactId>

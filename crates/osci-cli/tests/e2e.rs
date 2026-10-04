@@ -648,6 +648,7 @@ fn send_with_attachments() {
         .arg("send")
         .arg("meldung.xta")
         .args(["--attachment", "anhang.txt"])
+        .args(["--metadata-author", "ags:NNNNNNNNNNN"])
         .args(["--to", "dvdv:0241100012345"])
         .args(["--cert", "client-sign.p12"])
         .args(["--decrypter-cert", "client-cipher.p12"])
@@ -675,6 +676,10 @@ fn send_with_attachments() {
     assert!(
         store_envelope.contains("anhang.txt"),
         "attachment refId must ride along"
+    );
+    assert!(
+        store_envelope.contains("MessageMetaData"),
+        "XTA MessageMetaData header must ride along"
     );
     // The old single-content bug this pins shut: an attachment must not
     // silently vanish between CLI and wire.

@@ -59,6 +59,7 @@ rosci send [-|<file.xta>] --to <cert:<path>|dvdv:<org-key>[:<category>]>
           [--intermediary URL --intermediary-cert FILE]
           [--cert FILE] [--decrypter-cert FILE] [--subject TEXT]
           [--attachment FILE] [--chunk-size-kb KB]
+          [--metadata-author ID] [--metadata-reader ID]
           [--no-sign] [--no-encrypt] [--tls-ca FILE]
           [--tls-client-cert FILE] [--json]
 rosci fetch [--message-id ID | --all] [--chunk-size-kb KB] [--out DIR] [--json]
@@ -144,7 +145,8 @@ native online client when credentials-based lookup is acceptable.
 
 ## Testing
 
-107 tests: Java unit (24), Rust unit/integration/CLI (73), e2e (5),
+117 tests: Java unit (28), Rust unit/integration/CLI (82), e2e (7),
+plus the opt-in live interop suite (11; `make interop`),
 proptest invariants and doctests. The e2e suite runs the real binary +
 real jar against the mock intermediary with a per-run generated throwaway
 PKI — and every response is *signed* by the mock (XML-DSIG supplier

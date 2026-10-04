@@ -26,6 +26,24 @@ versions are internal milestones, not releases to a registry.
   intermediary-produced and counted but not validated; the harness
   promptly found that the mock's rich responses are *not*
   schema-conform (filed as §7 finding 7 in the compliance doc).
+- **Attachments on send** (§7 item 3): repeatable `--attachment FILE`
+  rides additional content parts in the same Zustellung — inside
+  EncryptedDataOSCI with per-attachment AES-256-GCM keys when encryption
+  is on. Live: attachment round-tripped byte-exact through the
+  OSCI-Manager postbox.
+- **EFFI chunked transfer** (§7 item 1): opt-in `--chunk-size-kb N` on
+  send and fetch. Send serializes the fully built StoreDelivery and
+  ships it as a PartialStoreDelivery sequence; fetch pulls chunked-
+  stored messages via PartialFetchDelivery with reassembly. Live: 2 MB
+  in 2 chunks, reassembled by the OSCI-Manager, fetched back byte-exact
+  (2,000,035 bytes). The manager's own partial-fetch variant answered
+  9811 and is not needed against this instance; the bridge keeps the
+  path for intermediaries that only serve chunks.
+- **XTA MessageMetaData** (§7 item 4, partial): `--metadata-author`/
+  `--metadata-reader` identifiers ride as a MessageMetaData custom SOAP
+  header with automatic MsgIdentification (the intermediary's message
+  id) and MsgSize. Live-accepted alongside attachments and encryption.
+  Fetch-side retrieval and the richer MMD structure remain unexposed.
 - **Supply-chain hardening (external audit follow-up).** The builder image
   no longer pipes `sh.rustup.rs` into a shell: rustup-init 1.29.1 is
   downloaded from the static.rust-lang.org archive and sha256-verified

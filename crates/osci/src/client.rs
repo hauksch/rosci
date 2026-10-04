@@ -72,6 +72,8 @@ impl OsciClient {
             xta,
             attachments: Vec::new(),
             chunk_size_kb: None,
+            metadata_author: None,
+            metadata_reader: None,
             recipient: None,
             subject: None,
             sign: true,
@@ -304,6 +306,8 @@ pub struct SendBuilder<'a> {
     xta: Xta,
     attachments: Vec<Xta>,
     chunk_size_kb: Option<u64>,
+    metadata_author: Option<String>,
+    metadata_reader: Option<String>,
     recipient: Option<Recipient>,
     subject: Option<String>,
     sign: bool,
@@ -330,6 +334,19 @@ impl SendBuilder<'_> {
     /// PartialStoreDelivery sequence.
     pub fn chunk_size_kb(mut self, kb: u64) -> Self {
         self.chunk_size_kb = Some(kb);
+        self
+    }
+
+    /// Sets the XTA MessageMetaData author identifier (Ergänzung; e.g.
+    /// an AGS like `ags:NNNNNNNNNNN`).
+    pub fn metadata_author(mut self, id: impl Into<String>) -> Self {
+        self.metadata_author = Some(id.into());
+        self
+    }
+
+    /// Sets the XTA MessageMetaData reader identifier.
+    pub fn metadata_reader(mut self, id: impl Into<String>) -> Self {
+        self.metadata_reader = Some(id.into());
         self
     }
 
@@ -372,6 +389,8 @@ impl SendBuilder<'_> {
             Some(self.attachments.iter().map(|a| a.to_payload()).collect())
         };
         req.chunk_size_kb = self.chunk_size_kb;
+        req.metadata_author = self.metadata_author.clone();
+        req.metadata_reader = self.metadata_reader.clone();
         req.sign = Some(self.sign);
         req.encrypt = Some(self.encrypt);
 
@@ -425,6 +444,8 @@ fn base_request(op: &'static str) -> Request {
         content: None,
         attachments: None,
         chunk_size_kb: None,
+        metadata_author: None,
+        metadata_reader: None,
         sign: None,
         encrypt: None,
         insecure_transport: None,

@@ -30,6 +30,8 @@ public final class Protocol
     public String subject; // send
     public Payload content; // send: the XTA payload as opaque bytes
     public List<Payload> attachments; // send: optional additional content parts
+    public String metadata_author; // send: XTA MessageMetaData author identifier (e.g. ags:NNNNNNNNNNN)
+    public String metadata_reader; // send: XTA MessageMetaData reader identifier
     /**
      * send: opt-in EFFI chunked transfer — the fully built StoreDelivery is
      * serialized, split into chunks of this many KB and shipped as

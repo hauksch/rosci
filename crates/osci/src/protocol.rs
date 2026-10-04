@@ -39,6 +39,12 @@ pub struct Request {
     /// fetch chunk size for chunked-stored messages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunk_size_kb: Option<u64>,
+    /// send: XTA MessageMetaData author identifier (e.g. `ags:NNNNNNNNNNN`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_author: Option<String>,
+    /// send: XTA MessageMetaData reader identifier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_reader: Option<String>,
     #[serde(skip_serializing_if = "is_none")]
     pub sign: Option<bool>,
     #[serde(skip_serializing_if = "is_none")]
@@ -260,6 +266,8 @@ mod tests {
             }),
             attachments: None,
             chunk_size_kb: None,
+            metadata_author: None,
+            metadata_reader: None,
             sign: Some(true),
             encrypt: Some(false),
             insecure_transport: None,

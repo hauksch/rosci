@@ -24,8 +24,15 @@ import de.osci.osci12.messageparts.Content;
 import de.osci.osci12.messageparts.ContentContainer;
 import de.osci.osci12.messageparts.EncryptedDataOSCI;
 import de.osci.osci12.messageparts.Inspection;
+import de.osci.osci12.messageparts.MessageMetaDataCustomHeader;
 import de.osci.osci12.messageparts.ProcessCardBundle;
 import de.osci.osci12.messageparts.Timestamp;
+import eu.osci.ws._2014._10.transport.DestinationsType;
+import eu.osci.ws._2014._10.transport.MessageMetaData;
+import eu.osci.ws._2014._10.transport.MsgIdentificationType;
+import eu.osci.ws._2014._10.transport.OriginatorsType;
+import eu.osci.ws._2014._10.transport.PartyIdentifierType;
+import eu.osci.ws._2014._10.transport.PartyType;
 import de.osci.osci12.messagetypes.ExitDialog;
 import de.osci.osci12.messagetypes.FetchDelivery;
 import de.osci.osci12.messagetypes.FetchProcessCard;
@@ -95,6 +102,45 @@ public final class OsciOps
 
       StoreDelivery delivery = new StoreDelivery(dialog, to, mid.getMessageId());
       delivery.setSubject(req.subject != null ? req.subject : "");
+
+      // XTA MessageMetaData (Ergänzung): author/reader identification plus
+      // the automatic message identification and size. Only attached when
+      // at least one identifier was configured — an empty custom header is
+      // ceremony without content.
+      if (req.metadata_author != null || req.metadata_reader != null)
+      {
+        MessageMetaData mmd = new MessageMetaData();
+        if (req.metadata_author != null)
+        {
+          PartyIdentifierType authorId = new PartyIdentifierType();
+          authorId.setType("xoev");
+          authorId.setValue(req.metadata_author);
+          PartyType author = new PartyType();
+          author.setIdentifier(authorId);
+          OriginatorsType originators = new OriginatorsType();
+          originators.setAuthor(author);
+          mmd.setOriginators(originators);
+        }
+        if (req.metadata_reader != null)
+        {
+          PartyIdentifierType readerId = new PartyIdentifierType();
+          readerId.setType("xoev");
+          readerId.setValue(req.metadata_reader);
+          PartyType reader = new PartyType();
+          reader.setIdentifier(readerId);
+          DestinationsType destinations = new DestinationsType();
+          destinations.setReader(reader);
+          mmd.setDestinations(destinations);
+        }
+        MsgIdentificationType identification = new MsgIdentificationType();
+        org.apache.cxf.ws.addressing.AttributedURIType messageIdUri =
+          new org.apache.cxf.ws.addressing.AttributedURIType();
+        messageIdUri.setValue(mid.getMessageId());
+        identification.setMessageID(messageIdUri);
+        mmd.setMsgIdentification(identification);
+        mmd.setMsgSize(java.math.BigInteger.valueOf(xta.length));
+        delivery.addCustomHeaderExtention(new MessageMetaDataCustomHeader(mmd));
+      }
 
       ContentContainer coco = new ContentContainer();
       String filename = req.content.filename != null ? req.content.filename : "message.xta";

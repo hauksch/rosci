@@ -73,7 +73,7 @@ all ten.
 |---|---|---|---|
 | InitDialog | library + bridge (one per operation) | full | e2e + interop |
 | GetMessageId | library + bridge (internal to send) | full | interop `send_secure…` |
-| StoreDelivery | bridge `send` + CLI | full (single content + subject; no multi-attachment) | interop: three send variants live |
+| StoreDelivery | bridge `send` + CLI | full (content + subject + repeatable `--attachment`; each part encrypted with its own key when encryption is on) | interop: send variants live; attachment round trip byte-exact |
 | FetchDelivery | bridge `fetch` + CLI | full for BY_MESSAGE_ID and ALL (spec rule 3); BY_DATE_OF_RECEPTION bridge-mapped but CLI-unexposed; BY_RECENT_MODIFICATION was a latent crash, fixed | interop: by-id round trip, `--all`, isolation |
 | FetchProcessCard | bridge `status` + CLI | partial (BY_MESSAGE_ID only; this manager retains no cards — 9804 live) | interop: structured rejection |
 | ExitDialog | bridge (implicit `exitDialogQuietly`) | partial by design — dialogs are one-shot (init → one Auftrag → exit); no exposed operation, no cross-request dialog reuse | e2e (dialog closed on error paths) |
@@ -115,8 +115,9 @@ a gap; revisit if a use case demands it.
 | Response signature verification (supplier) | full, automatic (`response_signed` surfaced) | live-verified |
 | Challenge/Response, ConversationId, SequenceNumber | full via library; dialogs one-shot | no cross-request dialog reuse |
 | MessageId / duplicate-submission protection | full via library (GetMessageId before every StoreDelivery) | |
-| TLS client authentication | bridge-capable, **CLI does not expose it** (`--tls-ca` only) | exposure gap, not a conformance gap |
+| TLS client authentication | full — `--tls-client-cert FILE` + `--tls-client-pin` (library builder + bridge were already there; the CLI now exposes them) | |
 | Timestamps / process cards | partial — see FetchProcessCard row; „Neuer Laufzettel" Ergänzung (2026) unsupported | |
+| XTA MessageMetaData (Ergänzung) | partial — `--metadata-author`/`--metadata-reader` identifiers + automatic MsgIdentification/MsgSize as a custom SOAP header; live-accepted by the OSCI-Manager. Fetch-side metadata retrieval and the fuller MMD structure (qualifiers, business scenario) not exposed | live send |
 | DVDV addressing | separate standard; rosci: local extract only (documented mission decision) | |
 
 ## 7. Deviations & gaps summary (the actionable list)
@@ -126,12 +127,14 @@ a gap; revisit if a use case demands it.
    manager serves reassembled messages via plain fetch; its
    partial-fetch variant returned 9811 and the bridge's partial-fetch
    path remains for intermediaries that need it.
-2. **TLS client-auth flag** missing in the CLI (bridge supports it).
-3. **Single-content send** — the standard allows multiple content
-   blocks/attachments per Zustellung; rosci sends exactly one opaque
-   XTA file (fetch side parses attachments fine).
-4. **Ergänzungen unsupported:** Neuer Laufzettel (2026),
-   MessageMetaData. EFFI as above.
+2. ~~TLS client-auth flag~~ — **closed**: `--tls-client-cert` +
+   `--tls-client-pin` (Phase A).
+3. ~~Single-content send~~ — **closed**: repeatable `--attachment`
+   (Phase B), attachment round trip live-verified byte-exact.
+4. **Ergänzungen:** MessageMetaData now **partial** (author/reader
+   identifiers + automatic MsgIdentification/MsgSize; fetch-side
+   retrieval and the richer MMD structure unexposed). Neuer Laufzettel
+   (2026) remains unsupported pending library support. EFFI: closed.
 5. **Warnings are hard failures** (except 3800) — stricter than §5,
    conservative direction, documented.
 6. **Schema-validation harness** for captured wire traffic — built

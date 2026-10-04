@@ -48,6 +48,7 @@ Field notes:
 | `recipient` | send | recipient cipher certificate |
 | `content` | send | the XTA payload as opaque base64 bytes — the bridge never parses it |
 | `attachments` | send | optional array of additional content parts (`{filename, content_type, data}`), riding in the same ContentContainer; encrypted with their own symmetric key when `encrypt` is on |
+| `metadata_author` / `metadata_reader` | send | optional XTA MessageMetaData identifiers (Ergänzung); a custom SOAP header with automatic MsgIdentification (the intermediary's message id) and MsgSize is attached when either is set |
 | `chunk_size_kb` | send, fetch | opt-in EFFI chunked transfer — send: the built StoreDelivery is split into PartialStoreDelivery chunks of this many KB; fetch: pull a chunked-stored message in partial-fetch chunks. Unset = plain StoreDelivery/FetchDelivery |
 | `sign`, `encrypt` | send | content-level signing / encryption (defaults: true) |
 | `insecure_transport` | all dialogs | `false` = plain SOAP transport, for local test intermediaries (see AUDIT.md) |
