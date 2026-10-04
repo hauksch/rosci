@@ -8,6 +8,41 @@ versions are internal milestones, not releases to a registry.
 ## [Unreleased]
 
 ### Added
+- **Supply-chain hardening (external audit follow-up).** The builder image
+  no longer pipes `sh.rustup.rs` into a shell: rustup-init 1.29.1 is
+  downloaded from the static.rust-lang.org archive and sha256-verified
+  (`ARG RUSTUP_INIT_SHA256`) before it may bootstrap the toolchain. The
+  base image is digest-pinned (`eclipse-temurin:21-jdk-jammy@sha256:…`,
+  amd64 manifest, verified current against the registry at pin time).
+  `make fuzz` installs an exactly-versioned `cargo-fuzz` 0.13.2 against a
+  dated `nightly-2026-10-03` (no more floating nightly, no more `|| true`
+  swallowing install failures) — which un-buried a real breakage the `|| true`
+  had been hiding: rustup ≥ 1.29 refuses to install without a rustup launcher
+  in the cargo home, so the old target had silently fuzzed on whatever nightly
+  the `RUSTUP_HOME` cache happened to hold. The target now installs against
+  the image's cargo home, puts the cargo-install bin dir on PATH, and
+  verifies the installed cargo-fuzz version, and `make audit` now scans the
+  fuzz tree's
+  own lockfile too (it was workspace-excluded and invisible to cargo-deny).
+  New `container/osv-java.sh` (wired into `make audit`): all 77 Maven
+  artifacts from DEPENDENCY_MANIFEST.sha256 are checked against the OSV
+  database — the checksum manifest proves integrity, the OSV gate proves
+  "and no advisory is published against it". The gate's first run caught
+  nine advisory-flagged versions (commons-io, commons-lang3,
+  plexus-utils ×5, iq80 snappy — all build-plugin transitives, none shipped
+  in the shaded jar), and every one was **moved** rather than accepted:
+  compiler 3.13.0 → 3.16.0, jar 3.4.1/3.4.2 → 3.5.1, resources
+  (unpinned/super-POM) → 3.5.0 and surefire (unpinned) → 3.6.0 now pinned
+  in **both** poms, jacoco 0.8.13 → 0.8.15 (with the `make coverage` agent
+  zip re-pinned and re-hashed to match), and — for shade 3.6.2, resources
+  3.5.0 and jacoco, which are already the newest stable releases but still
+  declare plexus-utils 3.6.0/3.0.24 — plugin-level dependency overrides to
+  plexus-utils 3.6.2. The OSV gate now reports clean across all 80 Maven
+  artifacts with an **empty allowlist**. The workspace crates now set
+  `publish = false`, and `rust-toolchain.toml` mirrors the container's
+  `ARG RUST_VERSION` so cargo outside the container cannot float either.
+  LOCK.md records the new pins; known RustSec advisories against the
+  locked tree: zero (verified against the advisory DB of 2026-10-03).
 - Opt-in interop suite (`crates/osci-cli/tests/interop.rs`, `make
   interop`): real store deliveries against Governikus' public
   OSCI-Manager test intermediary (gov.test.osci.de) using the library's

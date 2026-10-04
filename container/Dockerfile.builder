@@ -5,16 +5,25 @@
 # checksums. Everything the mission needs to turn XTA into valid OSCI without
 # installing a single JVM on the host. The host has suffered enough.
 #
-# Base:  Eclipse Temurin JDK 21 (runs the OSCI lib's Java 11 bytecode just fine)
-# Rust:  pinned stable via rustup (exact version also recorded in container/LOCK.md)
+# Base:  Eclipse Temurin JDK 21, digest-pinned (runs the OSCI lib's Java 11
+#        bytecode just fine)
+# Rust:  pinned stable via a checksummed rustup-init (exact versions also
+#        recorded in container/LOCK.md)
 # Maven: pinned tarball, sha512-verified, because trusting transitive infra is
 #        how you end up explaining an incident to the Landesrechenzentrum.
 
-# Fully qualified on purpose: podman refuses to guess registries, and honestly,
-# a build tool that guesses is how supply-chain incidents get their own RFCs.
-FROM docker.io/library/eclipse-temurin:21-jdk-jammy
+# Fully qualified AND digest-pinned on purpose: podman refuses to guess
+# registries, and honestly, a build tool that guesses is how supply-chain
+# incidents get their own RFCs. The digest is the amd64 manifest that the
+# moving tag resolved to when pinned (re-verify before bumping: the tag can
+# float independently per platform).
+FROM docker.io/library/eclipse-temurin:21-jdk-jammy@sha256:bc46d736fd7dfe699fa4cd96b14faa2a12a6ced042938dab8b2d7a249e3d2cb6
 
 ARG RUST_VERSION=1.98.1
+# The rustup installer itself is pinned and checksummed — piping sh.rustup.rs
+# into a shell would let whatever the CDN serves today bootstrap our toolchain.
+ARG RUSTUP_VERSION=1.29.1
+ARG RUSTUP_INIT_SHA256=dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
 ARG MAVEN_VERSION=3.9.11
 ARG MAVEN_SHA512=bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978
 
@@ -33,12 +42,17 @@ RUN apt-get update \
         zip \
     && rm -rf /var/lib/apt/lists/*
 
-# --- Rust toolchain (pinned) -------------------------------------------------
+# --- Rust toolchain (pinned, checksummed installer) ---------------------------
 ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo
-RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain "${RUST_VERSION}" --profile minimal \
+RUN curl -fsSL -o /tmp/rustup-init \
+        "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" \
+    && echo "${RUSTUP_INIT_SHA256}  /tmp/rustup-init" | sha256sum -c - \
+    && chmod +x /tmp/rustup-init \
+    && /tmp/rustup-init -y --no-modify-path --default-toolchain "${RUST_VERSION}" --profile minimal \
     && /opt/cargo/bin/rustup component add rustfmt clippy \
-    && chmod -R a+rX /opt/rustup /opt/cargo
+    && chmod -R a+rX /opt/rustup /opt/cargo \
+    && rm -f /tmp/rustup-init
 ENV PATH=/opt/cargo/bin:$PATH
 
 # cargo-deny for license/advisory enforcement (see deny.toml). Pinned like

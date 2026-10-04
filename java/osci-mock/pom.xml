@@ -37,7 +37,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.13.0</version>
+        <version>3.16.0</version>
         <configuration>
           <compilerArgs>
             <arg>-Xlint:all</arg>
@@ -45,10 +45,31 @@
           </compilerArgs>
         </configuration>
       </plugin>
+      <!-- resources + surefire pinned (and resources' plexus-utils overridden)
+           for the same reason as in osci-bridge/pom.xml: unpinned plugins fall
+           back to the super-POM defaults, whose transitive trees carry
+           advisory-flagged versions the OSV gate in `make audit` rejects. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <version>3.5.0</version>
+        <dependencies>
+          <dependency>
+            <groupId>org.codehaus.plexus</groupId>
+            <artifactId>plexus-utils</artifactId>
+            <version>3.6.2</version>
+          </dependency>
+        </dependencies>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.6.0</version>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
-        <version>3.4.2</version>
+        <version>3.5.1</version>
         <configuration>
           <archive>
             <manifest>

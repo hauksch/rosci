@@ -1,0 +1,7 @@
+# Toolchain pin — mirrors container/Dockerfile.builder's ARG RUST_VERSION so
+# any cargo outside the container resolves to the exact same compiler instead
+# of what rustup defaults to that day. Inside the container this file is a
+# no-op: the image already ships exactly this toolchain (+ the two components).
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

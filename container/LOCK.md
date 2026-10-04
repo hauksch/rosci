@@ -1,14 +1,20 @@
 # Build environment lock
 
-Recorded: 2026-09-30 (via `make lock-info`); amended 2026-10-04.
+Recorded: 2026-09-30 (via `make lock-info`); amended 2026-10-04 (supply-chain
+hardening: digest-pinned base image, checksummed rustup-init, pinned fuzz
+toolchain, OSV gate for the Java tree).
 
 | Component   | Version / pin                                                              |
 |-------------|----------------------------------------------------------------------------|
-| Base image  | `docker.io/library/eclipse-temurin:21-jdk-jammy` — observed amd64 digest `sha256:bc46d736fd7dfe699fa4cd96b14faa2a12a6ced042938dab8b2d7a249e3d2cb6` (2026-10-04). The Dockerfile still pins by tag; digest-pinning is the pending follow-up below |
+| Base image  | `docker.io/library/eclipse-temurin:21-jdk-jammy@sha256:bc46d736fd7dfe699fa4cd96b14faa2a12a6ced042938dab8b2d7a249e3d2cb6` — the Dockerfile pins this amd64 manifest digest directly (verified 2026-10-04 to be the current content of the moving tag; multi-arch index digest at that moment: `sha256:e0c60c487345d1dc9d0fc7b6f0496f3cc941e5132e09296cc17a6decc71b902b`) |
 | Java        | OpenJDK 21.0.12.1 LTS (runs the OSCI lib's Java 11 bytecode — it's fine)    |
-| Rust        | 1.98.1 (rustup-pinned in Dockerfile, `--profile minimal`) + rustfmt/clippy  |
+| Rust        | 1.98.1 via rustup-init **1.29.1, sha256-verified in the Dockerfile** (`--profile minimal`) + rustfmt/clippy |
+| rustup-init | 1.29.1 — `sha256:dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71` (x86_64-unknown-linux-gnu, from static.rust-lang.org/rustup/archive; pinned via `ARG RUSTUP_INIT_SHA256`) |
 | cargo-deny  | 0.20.2 (`cargo install --locked`, license/advisory gate)                    |
 | cargo-llvm-cov | 0.9.1 (`cargo install --locked`, coverage — added to the image in 0.3.0, row was missing from this table until 2026-10-04) |
+| cargo-fuzz  | 0.13.2 (`cargo install --locked --version`, dev-time only, installed on demand by `make fuzz`) |
+| nightly     | `nightly-2026-10-03` (dated pin, dev-time only, `make fuzz`; rustc 1.101.0-nightly) |
+| OSV gate    | `container/osv-java.sh` — scans all Maven artifacts from DEPENDENCY_MANIFEST.sha256 against api.osv.dev (`make audit`); build-time-only allowlist in the script |
 | Maven       | 3.9.11 (tarball, sha512-verified in Dockerfile)                              |
 | OpenSSL     | 3.0.2 (distro package, test-PKI generation)                                  |
 | Linker      | gcc (Ubuntu jammy, distro package)                                           |
@@ -16,17 +22,14 @@ Recorded: 2026-09-30 (via `make lock-info`); amended 2026-10-04.
 Builder image (locally built, tag `osci-deshittifier-builder:1`):
 
 ```
-localhost/osci-deshittifier-builder@sha256:377ff2d02dc24a251f0bdb5723b87e6c5c356c2537dd63db4ab5afac94eb9a17
+localhost/osci-deshittifier-builder@sha256:6fd4c4726c427f5d2c2d9bbc12a79bfd56dadb643cc0b36613cf9ab50c32e069
 ```
 
-(The digest identifies the locally built image including the pinned
-cargo-deny addition; the Dockerfile pins every input, which is the
-durable guarantee — the digest is the convenience.)
-
-**Pending re-record (2026-10-04):** the builder digest above predates the
-cargo-llvm-cov addition and must be re-recorded via `make lock-info` the
-next time the image is rebuilt. The base-image digest in the table was
-recorded from a direct pull of the pinned tag and is current.
+(Recorded 2026-10-04 via `make lock-info` after the supply-chain hardening
+rebuild — checksummed rustup-init, digest-pinned base image, OSV gate. The
+digest identifies the locally built image including cargo-deny and
+cargo-llvm-cov; the Dockerfile pins every input, which is the durable
+guarantee — the digest is the convenience.)
 
 ## Java dependency pins (see `java/osci-bridge/pom.xml`)
 

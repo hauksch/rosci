@@ -15,13 +15,15 @@ Pins (also in `container/Dockerfile.builder` and `container/LOCK.md`):
 
 | component | pin |
 |---|---|
-| base image | `docker.io/library/eclipse-temurin:21-jdk-jammy` |
-| rust | 1.98.1 (rustup, image build time) |
+| base image | `docker.io/library/eclipse-temurin:21-jdk-jammy@sha256:bc46d736…` (digest-pinned, see LOCK.md) |
+| rust | 1.98.1 via checksummed rustup-init 1.29.1 (`sha256:dda72343…`, pinned in the Dockerfile) |
 | maven | 3.9.11 (tarball, sha512-verified in the Dockerfile) |
 | OSCI library | `de.osci:osci-bibliothek:2.6.1` (Maven Central; EUPL-1.2/MIT) |
 | BouncyCastle | bcprov 1.85.2 (managed by the library's BOM), bcpkix 1.85 (test-only) |
 | gson | 2.13.2 |
 | Rust deps | `Cargo.lock`, reviewed licenses via `make audit` |
+| fuzz toolchain | `nightly-2026-10-03` + cargo-fuzz 0.13.2 (dev-time only, pinned in the Makefile) |
+| Java tree CVEs | OSV scan of every manifest artifact (`make audit` → `container/osv-java.sh`) |
 
 Rust dependency licensing is enforced with cargo-deny (`deny.toml`):
 

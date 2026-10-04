@@ -101,11 +101,13 @@ lint: image ## Rustfmt + clippy -D warnings + maven verify
 	$(IN_CONTAINER) $(MVN) -f java/osci-mock/pom.xml verify
 
 .PHONY: audit
-audit: image ## cargo-deny: licenses, advisories, crate sources
+audit: image ## cargo-deny (workspace + fuzz tree): licenses, advisories, crate sources — plus OSV scan of the Java tree
 	$(IN_CONTAINER) cargo deny --config deny.toml check --hide-inclusion-graph licenses advisories sources
+	$(IN_CONTAINER) bash -c 'cd fuzz && cargo deny --config ../deny.toml check --hide-inclusion-graph advisories sources'
+	$(IN_CONTAINER) bash container/osv-java.sh
 
-JACOCO_VERSION := 0.8.13
-JACOCO_ZIP_SHA256 := 96586427ed734138ca4867ca2ceeb70c27e856a113638ea41709ec0734147c60
+JACOCO_VERSION := 0.8.15
+JACOCO_ZIP_SHA256 := 5b3f6ddb724e761d25c937d68b0189a3a23f3e220e3282575ee0b53359e8110e
 
 .PHONY: coverage
 coverage: image ## Measured coverage: cargo-llvm-cov (Rust) + JaCoCo (Java bridge, unit + e2e)
@@ -142,13 +144,25 @@ coverage: image ## Measured coverage: cargo-llvm-cov (Rust) + JaCoCo (Java bridg
 	$(IN_CONTAINER) bash -c 'mkdir -p coverage && cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info'
 	@echo "Rust lcov report: coverage/lcov.info"
 
+# Fuzz toolchain pins: a dated nightly and an exactly-versioned cargo-fuzz.
+# Dev-time only (never touches shipped artifacts), but `cargo install` of an
+# unpinned tool still executes whatever crates.io resolves to on THAT day —
+# so it gets the same pin-and-checksum discipline as everything else.
+# The installer runs against the image's CARGO_HOME because rustup >= 1.29
+# refuses to install when the cargo home has no rustup launcher in bin/ (the
+# runtime CARGO_HOME=/work/.cargo-home doesn't — the failure this target's old
+# `|| true` used to bury, which is also why the nightly had floated silently).
+NIGHTLY_DATE     := 2026-10-03
+CARGO_FUZZ_VERSION := 0.13.2
+
 .PHONY: fuzz
-fuzz: image ## 60s libFuzzer smoke on the bridge-response parser (nightly + cargo-fuzz installed on demand)
+fuzz: image ## 60s libFuzzer smoke on the bridge-response parser (pinned nightly + cargo-fuzz, installed on demand)
 	$(IN_CONTAINER) bash -c '\
-	  export RUSTUP_HOME=/work/.rustup; \
-	  rustup toolchain install nightly --profile minimal >/dev/null 2>&1 || true; \
-	  command -v cargo-fuzz >/dev/null 2>&1 || cargo install cargo-fuzz --locked >/dev/null 2>&1; \
-	  cd fuzz && cargo +nightly fuzz run bridge_response_parse -- -max_total_time=60 2>&1 | tail -12'
+	  export RUSTUP_HOME=/work/.rustup PATH="/work/.cargo-home/bin:$$PATH"; \
+	  env CARGO_HOME=/opt/cargo rustup toolchain install nightly-$(NIGHTLY_DATE) --profile minimal >/dev/null || exit 1; \
+	  export RUSTUP_TOOLCHAIN=nightly-$(NIGHTLY_DATE); \
+	  cargo-fuzz --version 2>/dev/null | grep -q "$(CARGO_FUZZ_VERSION)" || cargo install cargo-fuzz --locked --version $(CARGO_FUZZ_VERSION) >/dev/null || exit 1; \
+	  cd fuzz && cargo fuzz run bridge_response_parse -- -max_total_time=60 2>&1 | tail -12'
 
 .PHONY: release
 release: image ## Produce dist/: osci binary, osci-bridge.jar, SHA256SUMS
@@ -190,7 +204,7 @@ check: lint test audit verify-deps git-guard ## Everything a good day needs: all
 
 .PHONY: lock-info
 lock-info: image ## Print exact tool versions + digests for container/LOCK.md
-	@OCI=$(OCI) bash container/record-lock.sh $(IMAGE)
+	@OCI="$(OCI)" bash container/record-lock.sh $(IMAGE)
 
 .PHONY: shell
 shell: image ## Drop into an interactive shell in the builder container

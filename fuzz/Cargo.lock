@@ -102,6 +102,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -270,6 +271,15 @@ name = "unicode-ident"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
+
+[[package]]
+name = "zeroize"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "zmij"

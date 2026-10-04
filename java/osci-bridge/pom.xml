@@ -93,7 +93,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.13.0</version>
+        <version>3.16.0</version>
         <configuration>
           <compilerArgs>
             <arg>-Xlint:all</arg>
@@ -101,10 +101,45 @@
           </compilerArgs>
         </configuration>
       </plugin>
+      <!-- jar + resources are pinned explicitly to pull their transitive
+           trees past published advisories (commons-io, plexus-utils, snappy):
+           the super-POM defaults (3.4.1 / 3.3.1) resolve vulnerable versions
+           that `make audit`'s OSV gate then flags. The plexus-utils override
+           applies the same lever one level deeper: shade 3.6.2 and resources
+           3.5.0 are already the newest stable releases but still carry
+           plexus-utils 3.6.0 (directory traversal, fixed in 3.6.1) — a direct
+           plugin dependency wins the classpath mediation over the transitive. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.5.1</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <version>3.5.0</version>
+        <dependencies>
+          <dependency>
+            <groupId>org.codehaus.plexus</groupId>
+            <artifactId>plexus-utils</artifactId>
+            <version>3.6.2</version>
+          </dependency>
+        </dependencies>
+      </plugin>
       <plugin>
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
-        <version>0.8.13</version>
+        <version>0.8.15</version>
+        <dependencies>
+          <!-- jacoco ships plexus-utils 3.0.24 (directory traversal, fixed in
+               3.6.1) as a direct dependency and has never bumped it — the
+               plugin-level override wins the classpath mediation. -->
+          <dependency>
+            <groupId>org.codehaus.plexus</groupId>
+            <artifactId>plexus-utils</artifactId>
+            <version>3.6.2</version>
+          </dependency>
+        </dependencies>
         <executions>
           <execution>
             <goals><goal>prepare-agent</goal></goals>
@@ -120,6 +155,15 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
         <version>3.6.2</version>
+        <dependencies>
+          <!-- see the resources-plugin comment: pulls plexus-utils past
+               GHSA-6fmv-xxpf-w3cw without waiting for a shade release -->
+          <dependency>
+            <groupId>org.codehaus.plexus</groupId>
+            <artifactId>plexus-utils</artifactId>
+            <version>3.6.2</version>
+          </dependency>
+        </dependencies>
         <executions>
           <execution>
             <phase>package</phase>
@@ -148,7 +192,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
-        <version>3.5.6</version>
+        <version>3.6.0</version>
       </plugin>
     </plugins>
   </build>
