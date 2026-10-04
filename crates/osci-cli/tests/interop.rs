@@ -173,9 +173,10 @@ fn write_payload() -> PathBuf {
 }
 
 /// A fetch command against the test intermediary, authenticated as the
-/// given identity. `--message-id` is the selection real OSCI-Managers
-/// honor; `--all` (library `SELECT_ALL = -1` → empty selection on the
-/// wire) is rejected by this instance regardless of identity.
+/// given identity. `--message-id` is the deterministic selection; `--all`
+/// is spec §6.6.9 rule 3 („oldest pending delivery") and works, but bob's
+/// postbox on this public instance is shared with other testers — only
+/// by-id assertions may be byte-exact.
 fn fetch_cmd(
     message_id: &str,
     out_dir: &Path,
@@ -284,11 +285,12 @@ fn send_without_signature_is_accepted() {
     let _ = fs::remove_file(&payload);
 }
 
-/// The test intermediary keeps no client postboxes and hands out no process
-/// cards for the ids it assigns. Both must surface as the documented,
-/// structured rejections (exit 4, mapped feedback) — not hangs, not silent
-/// nonsense. (Observed live: 9804 for status, 9803 for fetch — codes
-/// deliberately not asserted, the OSCI-Manager may phrase these freely.)
+/// This manager retains no process cards for the ids it assigns (status)
+/// and alice — who only ever sends — has an empty postbox (fetch --all,
+/// feedback 9803 „keine Zustellung vorhanden"). Both must surface as the
+/// structured rejections they are (exit 4, mapped feedback) — not hangs,
+/// not silent nonsense. Codes deliberately not asserted (the OSCI-Manager
+/// may phrase them freely).
 #[test]
 fn status_and_fetch_are_structured_rejections() {
     let Some(()) = gate() else { return };
@@ -459,6 +461,67 @@ fn fetch_by_a_party_without_the_message_is_rejected() {
     .failure()
     .code(4)
     .stderr(predicate::str::contains("intermediary rejected"));
+    let _ = fs::remove_file(&payload);
+}
+
+/// `fetch --all` is spec §6.6.9 rule 3 („Ist weder osci:MessageId noch
+/// osci:ReceptionOfDelivery vorhanden, so wird die Zustellung mit dem
+/// ältesten Zeitpunkt der Einreichung … zurückgesendet") — it delivers
+/// the oldest pending message, and this manager appends the §6.6.10
+/// warning 3800 „weitere Zustellungen liegen vor", which must NOT fail
+/// the request (spec §5: a warning means the order was executed). Bob's
+/// postbox on this public instance is shared with other testers, so the
+/// contents are whatever is oldest for bob — assertions stay structural.
+#[test]
+fn fetch_all_delivers_pending_messages_as_a_warning_not_an_error() {
+    let Some(()) = gate() else { return };
+    // Seed bob's postbox so the shared postbox cannot be empty.
+    let payload = write_payload();
+    send_cmd(
+        &unique_subject("all"),
+        &payload,
+        &fixture("osci_manager_cipher_4096.pem"),
+        &fixture("alice_signature_4096.p12"),
+        Some(&fixture("carol_cipher_4096.p12")),
+        DEMO_PIN,
+    )
+    .assert()
+    .success();
+
+    let out_dir = tempfile::tempdir().expect("fetch out dir");
+    let mut cmd = rosci();
+    cmd.args(["fetch", "--all", "--out"])
+        .arg(out_dir.path())
+        .args([
+            "--intermediary",
+            INTERMEDIARY,
+            "--intermediary-cert",
+            fixture("osci_manager_cipher_4096.pem").to_str().unwrap(),
+        ])
+        .arg("--cert")
+        .arg(fixture("bob_signature_4096.p12"))
+        .arg("--decrypter-cert")
+        .arg(fixture("bob_cipher_4096.p12"))
+        .args(["--pin", DEMO_PIN, "--json"]);
+    let fetch_out = cmd.assert().success().get_output().stdout.clone();
+    let fetched: serde_json::Value = serde_json::from_slice(&fetch_out).expect("valid JSON result");
+    let messages = fetched.as_array().expect("fetch yields a JSON array");
+    assert!(
+        !messages.is_empty(),
+        "at least the seeded message must arrive"
+    );
+    use base64::Engine as _;
+    for m in messages {
+        for key in ["contents", "encrypted_contents"] {
+            if let Some(items) = m[key].as_array() {
+                for c in items {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(c["data"].as_str().expect("content carries data"))
+                        .expect("delivered content is valid base64");
+                }
+            }
+        }
+    }
     let _ = fs::remove_file(&payload);
 }
 

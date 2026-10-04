@@ -89,9 +89,11 @@ DER). A file that is neither fails at config parse (exit 2) with the
 file named and its first byte reported — not with a UTF-8 riddle.
 
 Two things about `fetch` on real intermediaries: it authenticates as
-the message's **recipient**, and `--message-id` is the selection they
-honor — `--all` maps to the library's empty selection (`SELECT_ALL =
--1`), which stricter managers reject.
+the message's **recipient**, and it returns **one message per call**.
+`--all` is spec §6.6.9 rule 3 — the oldest pending delivery — and the
+intermediary warns with 3800 „weitere Zustellungen liegen vor" when
+more remain; `--message-id <id>` selects a specific message
+deterministically.
 
 ## DVDV
 

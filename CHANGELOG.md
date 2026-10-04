@@ -19,10 +19,11 @@ versions are internal milestones, not releases to a registry.
   postbox round trip**: fetch authenticated as the recipient (bob)
   returns alice's content-encrypted delivery byte-exact, while the
   same id fetched as the sender is cleanly rejected (postbox
-  isolation). Usage insight en route: `fetch --all` maps to the
-  library's `SELECT_ALL = -1` = empty selection on the wire, which
-  this manager rejects (9803) — `fetch --message-id` is the selection
-  real intermediaries honor. Fixtures are the vendor's public demo
+  isolation). `fetch --all` is covered too: it is spec §6.6.9 rule 3
+  („oldest pending delivery") and delivers with warning 3800 — with the
+  caveat that bob's postbox on the public instance is shared with other
+  testers, so `--all` assertions stay structural and `--message-id`
+  carries the byte-exact check. Fixtures are the vendor's public demo
   certs (PEM-converted, pinned by SHA256SUMS, documented .gitignore
   exceptions — the intermediary rejects self-signed senders, feedback
   3707, so generated identities are not an option). `make test`/`make
@@ -38,6 +39,15 @@ versions are internal milestones, not releases to a registry.
   opt-in exception (`ROSCI_INTEROP=1`, never in `make test`/`check`).
 
 ### Fixed
+- **Fetch warnings were treated as rejections.** A successful fetch
+  whose response carries the spec's §6.6.10 warning 3800 „Es liegen
+  weitere Zustellungen für diesen Client vor" alongside a success
+  receipt (0801) was rejected with exit 4 — and the delivered message
+  was discarded. The bridge now tolerates the 3800 indicator (spec §5:
+  „Erfolgsmeldung oder Warnung" means the order was executed) while
+  still failing loudly on everything else — including 3707, which
+  lives in the warning class but is a hard rejection. Unit tests pin
+  the classification matrix.
 - **DER certificate files failed with a UTF-8 riddle.** `--intermediary-cert`,
   `--to cert:…` and `--tls-ca` read their files as UTF-8 text, so a
   DER-encoded `.cer` (OpenSSL's favorite export format) died with

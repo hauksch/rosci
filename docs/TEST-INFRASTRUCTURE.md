@@ -64,13 +64,17 @@ Notes:
   and, as proven live on 2026-10-04, a **working postbox for the demo
   recipient**: a store delivery addressed to bob can be fetched by bob
   via `fetch --message-id <id>` (see §6).
-- What it does **not** offer: `status` (no process cards are retained —
-  clean 9804 rejection) and `fetch --all` (the library's `SELECT_ALL`
-  is `-1`, which serializes to an *empty selection* on the wire; this
-  manager rejects it with 9803 regardless of identity). Fetching
-  requires the explicit `--message-id` selection, and it authenticates
-  as the **recipient** — fetching your own sent message as the sender
-  fails by design (postbox isolation).
+- What it does **not** offer: `status` — no process cards are retained
+  (clean 9804 rejection). Fetching works both by explicit selection
+  (`fetch --message-id <id>`) and with the empty selection
+  (`fetch --all`, spec §6.6.9 rule 3: „die Zustellung mit dem ältesten
+  Zeitpunkt der Einreichung"), which succeeds with the §6.6.10 warning
+  3800 „weitere Zustellungen liegen vor" when more messages remain.
+  Caveat: bob's postbox is **shared** — every tester of this public
+  instance sends to bob, so `--all` returns foreign messages too; by-id
+  is the deterministic selection. Fetching authenticates as the
+  **recipient** — fetching your own sent message as the sender fails by
+  design (postbox isolation).
 
 ## 3. Certificates (paths verified via the GitLab API, 2026-10-04)
 
@@ -226,14 +230,23 @@ interop suite (`crates/osci-cli/tests/interop.rs`, `make interop`):
   and decryption. Postbox isolation holds: the same id fetched as the
   *sender* (alice) is a clean structured rejection. One FetchDelivery
   returns at most one message (library javadoc).
-- **Selection semantics on this manager:** the library's `SELECT_ALL`
-  is `-1`, which serializes to an *empty selection* — rejected with
-  `9803` ("No selection for: Selection Mode: -1") regardless of
-  identity. The explicit selection (`BY_MESSAGE_ID` + rule →
-  `<SelectionRule><MessageId>base64</MessageId></SelectionRule>`) is
-  the path that works. Practical rule: **`fetch --message-id` against
-  real intermediaries; `--all` is a library-default lenient managers
-  may accept.**
+- **Selection semantics:** the library's `SELECT_ALL` is `-1`, which
+  serializes to *no SelectionRule element at all* — and that is exactly
+  spec §6.6.9 **rule 3**: „Ist weder osci:MessageId noch
+  osci:ReceptionOfDelivery vorhanden, so wird die Zustellung mit dem
+  ältesten Zeitpunkt der Einreichung … zurückgesendet". This manager
+  honors it: `fetch --all` as bob delivered the oldest pending messages
+  and appended the §6.6.10 warning 3800 „weitere Zustellungen liegen
+  vor". The earlier 9803s ("No selection for: Selection Mode: -1") were
+  alice's fetches — 9803 means „zu den Kriterien ist keine Zustellung
+  vorhanden" (spec §5), and alice's postbox is empty by design.
+  `fetch --message-id` (`<SelectionRule><MessageId>base64</MessageId>
+  </SelectionRule>`) is the deterministic selection and stays the
+  suite's byte-exact anchor.
+- **Shared postbox:** bob is every tester's addressee on this public
+  instance — `fetch --all` as bob returned foreign messages (including
+  a multi-megabyte attachment). Suite assertions on `--all` are
+  structural only; byte-exact assertions ride on `--message-id`.
 - **`status` is a structured rejection** on this instance — observed
   `9804` ("No or wrong messageId given!") with properly mapped feedback
   text and exit 4; the manager retains no process cards for the demo

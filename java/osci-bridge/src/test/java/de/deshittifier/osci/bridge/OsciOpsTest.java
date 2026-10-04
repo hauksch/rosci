@@ -75,4 +75,37 @@ class OsciOpsTest
     assertArrayEquals(raw, Base64.getDecoder().decode(fc.data));
     assertEquals("encrypted", fc.container);
   }
+
+  @Test
+  void positiveReceiptsAndThePendingDeliveriesWarningPass()
+  {
+    // 3800 „weitere Zustellungen liegen vor" is a spec §6.6.10 warning that
+    // accompanies a SUCCESSFUL fetch (one message per FetchDelivery); it
+    // must not fail the request.
+    String[][] warningThenOk = {
+        {"de", "3800", "Es liegen weitere Zustellungen für diesen Client vor"},
+        {"de", "0801", "Auftrag ausgeführt, Dialog weiterhin geöffnet"},
+    };
+    OsciOps.checkFeedbackRows(warningThenOk); // must not throw
+    OsciOps.checkFeedbackRows(new String[][]{{"de", "0800", "Auftrag ausgeführt, Dialog beendet"}});
+  }
+
+  @Test
+  void errorCodesAndHardRejectionsFailLoudly()
+  {
+    assertThrowsFeedback(new String[][]{{"de", "9803", "keine Zustellung vorhanden"}});
+    assertThrowsFeedback(new String[][]{{"de", "9804", "No or wrong messageId given"}});
+    // 3707 lives in the 3-class but is a hard rejection (the delivery is
+    // refused) — the narrow 3800 whitelist does not launder it.
+    assertThrowsFeedback(new String[][]{
+        {"de", "3707", "Certificate is selfsigned."},
+        {"de", "0800", "Auftrag ausgeführt, Dialog beendet"},
+    });
+  }
+
+  private void assertThrowsFeedback(String[][] feedback)
+  {
+    org.junit.jupiter.api.Assertions.assertThrows(BridgeException.class,
+                                                  () -> OsciOps.checkFeedbackRows(feedback));
+  }
 }

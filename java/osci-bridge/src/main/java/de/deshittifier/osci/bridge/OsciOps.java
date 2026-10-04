@@ -463,7 +463,21 @@ public final class OsciOps
 
   private static void checkFeedback(OSCIResponseTo rsp)
   {
-    String[][] feedback = rsp.getFeedback();
+    checkFeedbackRows(rsp == null ? null : rsp.getFeedback());
+  }
+
+  /**
+   * 0xxx are positive receipts ("Auftrag ausgeführt"). 3xxx are warnings
+   * per spec §5 — "Erfolgsmeldung oder Warnung" means the order WAS
+   * executed — but intermediaries use the 3-class for hard rejections
+   * too (3707 „Certificate is selfsigned" refuses the delivery), so
+   * warnings are not blindly accepted: only the spec's §6.6.10 indicator
+   * for „weitere Zustellungen liegen vor" (3800) is tolerated, because a
+   * fetch that delivers a message and notes „more pending" is a success,
+   * not a rejection. Everything else fails loudly.
+   */
+  static void checkFeedbackRows(String[][] feedback)
+  {
     if (feedback == null)
       return;
     for (String[] row : feedback)
@@ -471,7 +485,8 @@ public final class OsciOps
       // Row layout per the library: [lang, code, text] — see FeedbackObject
       // (lang = [0], code = [1], text = [2]). Codes starting with '0' are
       // the OSCI way of saying "yes, fine, everything ok, next please".
-      if (row.length > 1 && row[1] != null && !row[1].startsWith("0"))
+      if (row.length > 1 && row[1] != null && !row[1].startsWith("0")
+          && !"3800".equals(row[1]))
         throw new BridgeException(BridgeException.OSCI,
                                   "intermediary rejected the request: " + rowText(row),
                                   toProtocolFeedback(feedback));
