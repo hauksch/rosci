@@ -13,14 +13,21 @@ versions are internal milestones, not releases to a registry.
   OSCI-Manager test intermediary (gov.test.osci.de) using the library's
   published demo identities — secure send, `--no-encrypt`/`--no-sign`
   variants (all answered with verified signed responses), structured
-  live rejections for `status`/`fetch`, loud failure on a wrong
-  intermediary certificate, and a DOI-identity rung gated on
-  `ROSCI_INTEROP_CERT`/`ROSCI_INTEROP_CERT_PIN`. Fixtures are the
-  vendor's public demo certs (PEM-converted, pinned by SHA256SUMS,
-  documented .gitignore exceptions — the intermediary rejects
-  self-signed senders, feedback 3707, so generated identities are not
-  an option). `make test`/`make check` never touch the network:
-  ungated, the suite skips at zero cost.
+  live rejections for `status`, loud failure on a wrong intermediary
+  certificate, a DOI-identity rung gated on
+  `ROSCI_INTEROP_CERT`/`ROSCI_INTEROP_CERT_PIN` — and **the full
+  postbox round trip**: fetch authenticated as the recipient (bob)
+  returns alice's content-encrypted delivery byte-exact, while the
+  same id fetched as the sender is cleanly rejected (postbox
+  isolation). Usage insight en route: `fetch --all` maps to the
+  library's `SELECT_ALL = -1` = empty selection on the wire, which
+  this manager rejects (9803) — `fetch --message-id` is the selection
+  real intermediaries honor. Fixtures are the vendor's public demo
+  certs (PEM-converted, pinned by SHA256SUMS, documented .gitignore
+  exceptions — the intermediary rejects self-signed senders, feedback
+  3707, so generated identities are not an option). `make test`/`make
+  check` never touch the network: ungated, the suite skips at zero
+  cost.
 - `docs/TEST-INFRASTRUCTURE.md`: briefing for the interop test suite —
   the open Governikus OSCI-Manager test intermediary
   (gov.test.osci.de, no registration; endpoint terms, verified

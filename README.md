@@ -88,6 +88,11 @@ as-is (binary DER is base64-wrapped for the bridge, which accepts bare
 DER). A file that is neither fails at config parse (exit 2) with the
 file named and its first byte reported — not with a UTF-8 riddle.
 
+Two things about `fetch` on real intermediaries: it authenticates as
+the message's **recipient**, and `--message-id` is the selection they
+honor — `--all` maps to the library's empty selection (`SELECT_ALL =
+-1`), which stricter managers reject.
+
 ## DVDV
 
 The DVDV (Deutsches Verwaltungsdiensteverzeichnis — a directory of

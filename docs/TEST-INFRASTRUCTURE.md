@@ -60,11 +60,17 @@ Notes:
   `--tls-ca` is needed either.)
 - What it offers: synchronous request/response against a **passive OSCI
   recipient** that acknowledges receipt / returns an empty message —
-  see `PassiveRecipient.java` in the library repo for the addressing.
-- What it does **not** offer: message pickup. `rosci fetch`/`status`
-  against this instance is out of scope — the async
-  StoreDelivery→FetchDelivery lifecycle remains covered by the local
-  mock intermediary only.
+  see `PassiveRecipient.java` in the library repo for the addressing —
+  and, as proven live on 2026-10-04, a **working postbox for the demo
+  recipient**: a store delivery addressed to bob can be fetched by bob
+  via `fetch --message-id <id>` (see §6).
+- What it does **not** offer: `status` (no process cards are retained —
+  clean 9804 rejection) and `fetch --all` (the library's `SELECT_ALL`
+  is `-1`, which serializes to an *empty selection* on the wire; this
+  manager rejects it with 9803 regardless of identity). Fetching
+  requires the explicit `--message-id` selection, and it authenticates
+  as the **recipient** — fetching your own sent message as the sender
+  fails by design (postbox isolation).
 
 ## 3. Certificates (paths verified via the GitLab API, 2026-10-04)
 
@@ -78,13 +84,15 @@ raw URL pattern: `https://gitlab.opencode.de/governikus/osci/osci-bib-java/-/raw
 | Intermediary cipher cert → `--intermediary-cert` | `osci_manager_cipher_4096.cer` |
 | Intermediary signature cert (response-signature pinning, optional) | `osci_manager_signature_4096.cer` |
 | Recipient cipher cert → `--to cert:…` | `bob_cipher_4096.cer` (likewise `alice_`, `carol_`, `dave_`) |
+| **Receiving identity → `fetch` as bob** (`--cert`/`--decrypter-cert`) | `bob_signature_4096.p12` + `bob_cipher_4096.p12` |
+| Sender identity (⇒ alice) + decrypter (⇒ carol) | `alice_signature_4096.p12`, `carol_cipher_4096.p12` |
 | Demo PKCS#12 keystores for two-sided local emulation | same stems, `.p12` |
 | Legacy (do not use) | `alt/test_osci-manager_cypher.*` |
 
-Caveat: the GitLab docs tree is tagged 2.4.3 while this project depends
-on `de.osci:osci-bibliothek:2.6.1` — the paths above were verified
-against `master` on 2026-10-04, but re-verify the filenames at
-implementation time in case the demo PKI has rotated since.
+The suite vendors the six files in the first, third-to-sixth rows (PEM
+conversions of the `.cer` files, `SHA256SUMS`-pinned). Caveat: the
+paths were verified against the `2.6.1` tag (not `master` — the demo
+PKI rotates, see the `alt/` directory) on 2026-10-04.
 
 ## 4. rosci wiring
 
@@ -100,6 +108,15 @@ rosci send meldung.xta \
   --decrypter-cert crates/osci-cli/tests/fixtures/interop/carol_cipher_4096.p12 \
   --to cert:crates/osci-cli/tests/fixtures/interop/bob_cipher_4096.pem \
   --subject "rosci-interop-$(date +%s)" --json
+
+# … and the recipient picks the message up (the id comes from the send
+# response). Fetching authenticates as the RECIPIENT:
+rosci fetch --message-id <message-id> --out fetched/ \
+  --intermediary http://gov.test.osci.de/osci-manager-entry/externalentry \
+  --intermediary-cert crates/osci-cli/tests/fixtures/interop/osci_manager_cipher_4096.pem \
+  --cert crates/osci-cli/tests/fixtures/interop/bob_signature_4096.p12 \
+  --decrypter-cert crates/osci-cli/tests/fixtures/interop/bob_cipher_4096.p12 \
+  --json
 ```
 
 Assertions for the happy path: exit code `0`, `response_signed: true`
@@ -201,11 +218,27 @@ interop suite (`crates/osci-cli/tests/interop.rs`, `make interop`):
   V-PKI-issued identity) is the interesting next datum.
 - **`--no-encrypt` and `--no-sign` are accepted** by the intermediary
   (signed responses either way).
-- **`status` and `fetch` are structured rejections** on this instance —
-  observed `9804` ("No or wrong messageId given!") and `9803` ("No
-  selection for: Selection Mode: -1") with properly mapped feedback
-  text and exit 4. No postboxes here; codes deliberately not asserted
-  in the suite (the OSCI-Manager may phrase them freely).
+- **Fetch works — as the recipient.** A store delivery addressed to bob
+  lands in bob's postbox; `fetch --message-id <id>` authenticated as
+  bob (`bob_signature_4096.p12` + `bob_cipher_4096.p12`) returns the
+  message and the bridge decrypts it — **byte-exact round trip** of the
+  payload through content encryption, postbox storage, fetch delivery
+  and decryption. Postbox isolation holds: the same id fetched as the
+  *sender* (alice) is a clean structured rejection. One FetchDelivery
+  returns at most one message (library javadoc).
+- **Selection semantics on this manager:** the library's `SELECT_ALL`
+  is `-1`, which serializes to an *empty selection* — rejected with
+  `9803` ("No selection for: Selection Mode: -1") regardless of
+  identity. The explicit selection (`BY_MESSAGE_ID` + rule →
+  `<SelectionRule><MessageId>base64</MessageId></SelectionRule>`) is
+  the path that works. Practical rule: **`fetch --message-id` against
+  real intermediaries; `--all` is a library-default lenient managers
+  may accept.**
+- **`status` is a structured rejection** on this instance — observed
+  `9804` ("No or wrong messageId given!") with properly mapped feedback
+  text and exit 4; the manager retains no process cards for the demo
+  flow. Codes deliberately not asserted in the suite (the OSCI-Manager
+  may phrase them freely).
 - **Wrong intermediary cert fails loudly** (exit 4, message-level
   diagnosis) — no hang, no silent fallback.
 - **Certificate hygiene:** server-side certs (`osci_manager_cipher_4096`,

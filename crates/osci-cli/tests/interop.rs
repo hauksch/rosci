@@ -172,6 +172,34 @@ fn write_payload() -> PathBuf {
     path
 }
 
+/// A fetch command against the test intermediary, authenticated as the
+/// given identity. `--message-id` is the selection real OSCI-Managers
+/// honor; `--all` (library `SELECT_ALL = -1` → empty selection on the
+/// wire) is rejected by this instance regardless of identity.
+fn fetch_cmd(
+    message_id: &str,
+    out_dir: &Path,
+    cert: &Path,
+    decrypter: &Path,
+    pin: &str,
+) -> AssertCommand {
+    let mut cmd = rosci();
+    cmd.args(["fetch", "--message-id", message_id, "--out"])
+        .arg(out_dir)
+        .args([
+            "--intermediary",
+            INTERMEDIARY,
+            "--intermediary-cert",
+            fixture("osci_manager_cipher_4096.pem").to_str().unwrap(),
+        ])
+        .arg("--cert")
+        .arg(cert)
+        .arg("--decrypter-cert")
+        .arg(decrypter)
+        .args(["--pin", pin, "--json"]);
+    cmd
+}
+
 /// The happy path, twice over: a foreign, production-grade intermediary
 /// accepts our store delivery and signs its response — which our automatic
 /// verification (de.osci library) accepts. `response_signed: true` is the
@@ -334,6 +362,103 @@ fn wrong_intermediary_cert_fails_loudly() {
     .failure()
     .code(4)
     .stderr(predicate::str::is_empty().not());
+    let _ = fs::remove_file(&payload);
+}
+
+/// The crown jewel: the full postbox round trip on live crypto. Alice
+/// sends a content-encrypted store delivery addressed to bob; bob fetches
+/// it by message id (the selection real OSCI-Managers honor) and the
+/// bridge decrypts it with bob's cipher key. Byte-exactness of the
+/// payload proves content encryption, postbox storage, fetch delivery
+/// and decryption in one assertion chain.
+#[test]
+fn fetch_delivers_the_stored_message_to_its_recipient() {
+    let Some(()) = gate() else { return };
+    let payload = write_payload();
+    let sent = fs::read(&payload).unwrap();
+    let output = send_cmd(
+        &unique_subject("fetch"),
+        &payload,
+        &fixture("osci_manager_cipher_4096.pem"),
+        &fixture("alice_signature_4096.p12"),
+        Some(&fixture("carol_cipher_4096.p12")),
+        DEMO_PIN,
+    )
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON result");
+    let message_id = json["message_id"].as_str().expect("message id").to_owned();
+
+    let out_dir = tempfile::tempdir().expect("fetch out dir");
+    let fetch_out = fetch_cmd(
+        &message_id,
+        out_dir.path(),
+        &fixture("bob_signature_4096.p12"),
+        &fixture("bob_cipher_4096.p12"),
+        DEMO_PIN,
+    )
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let fetched: serde_json::Value = serde_json::from_slice(&fetch_out).expect("valid JSON result");
+    let messages = fetched.as_array().expect("fetch yields a JSON array");
+    assert_eq!(
+        messages.len(),
+        1,
+        "exactly the one stored message: {fetched}"
+    );
+    let data = messages[0]["encrypted_contents"][0]["data"]
+        .as_str()
+        .expect("fetched encrypted content with data");
+    use base64::Engine as _;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .expect("fetched content is base64");
+    assert_eq!(decoded, sent, "byte-exact round trip through the postbox");
+    let _ = fs::remove_file(&payload);
+}
+
+/// Postbox isolation: the same message id fetched by a party that is not
+/// the recipient is a clean, structured rejection — not silence, not
+/// someone else's message. (Live: 9803 „No or wrong messageId given!“,
+/// which this manager uses for both unknown ids and foreign postboxes.)
+#[test]
+fn fetch_by_a_party_without_the_message_is_rejected() {
+    let Some(()) = gate() else { return };
+    let payload = write_payload();
+    let output = send_cmd(
+        &unique_subject("isolation"),
+        &payload,
+        &fixture("osci_manager_cipher_4096.pem"),
+        &fixture("alice_signature_4096.p12"),
+        Some(&fixture("carol_cipher_4096.p12")),
+        DEMO_PIN,
+    )
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON result");
+    let message_id = json["message_id"].as_str().expect("message id").to_owned();
+
+    let out_dir = tempfile::tempdir().expect("fetch out dir");
+    let _ = fetch_cmd(
+        &message_id,
+        out_dir.path(),
+        &fixture("alice_signature_4096.p12"),
+        &fixture("carol_cipher_4096.p12"),
+        DEMO_PIN,
+    )
+    .assert()
+    .failure()
+    .code(4)
+    .stderr(predicate::str::contains("intermediary rejected"));
     let _ = fs::remove_file(&payload);
 }
 
