@@ -163,6 +163,10 @@ interop suite against the open Governikus OSCI-Manager instance
 wire-verified evidence, and how to obtain real DOI/V-PKI sender
 certificates: [docs/TEST-INFRASTRUCTURE.md](docs/TEST-INFRASTRUCTURE.md).
 
+Where the OSCI 1.2 standard normatively lives and how rosci measures up
+against it (order-type matrix, security mechanisms, deviations): 
+[docs/STANDARD-COMPLIANCE.md](docs/STANDARD-COMPLIANCE.md).
+
 ## Mission rules
 
 1. Everything lives in this directory — caches, Maven repo, cargo home.

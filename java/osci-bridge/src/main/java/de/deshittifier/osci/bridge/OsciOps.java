@@ -447,7 +447,14 @@ public final class OsciOps
     return s == null ? new char[0] : s.toCharArray();
   }
 
-  private static int selectionMode(String mode)
+  /**
+   * Only modes the library's {@code FetchRequestAbstract.setSelectionMode}
+   * actually accepts: it throws {@code IllegalArgumentException} for
+   * SELECT_BY_RECENT_MODIFICATION (2), so that mapping used to crash the
+   * bridge with a stack trace instead of a clean protocol error. Unknown
+   * modes fail cleanly here.
+   */
+  static int selectionMode(String mode)
   {
     if (mode == null || "BY_MESSAGE_ID".equals(mode))
       return OSCIMessage.SELECT_BY_MESSAGE_ID;
@@ -455,7 +462,6 @@ public final class OsciOps
     {
       case "ALL": return OSCIMessage.SELECT_ALL;
       case "BY_DATE_OF_RECEPTION": return OSCIMessage.SELECT_BY_DATE_OF_RECEPTION;
-      case "BY_RECENT_MODIFICATION": return OSCIMessage.SELECT_BY_RECENT_MODIFICATION;
       default:
         throw new BridgeException(BridgeException.PROTOCOL, "unknown selection_mode: " + mode);
     }

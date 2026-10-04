@@ -43,6 +43,14 @@ versions are internal milestones, not releases to a registry.
   `ARG RUST_VERSION` so cargo outside the container cannot float either.
   LOCK.md records the new pins; known RustSec advisories against the
   locked tree: zero (verified against the advisory DB of 2026-10-03).
+- `docs/STANDARD-COMPLIANCE.md`: where OSCI 1.2 normatively lives
+  (Spezifikation + individually authoritative Korrigenda 1–10 + XML
+  schemas on xoev.de; the consolidated PDF is nicht-normativ) and how
+  rosci is compared for completeness — five-method framework, the
+  order-type matrix over all ten Aufträge (spec §7 licenses user
+  software to implement a subset), security-mechanism matrix, feedback
+  policy, deviations and gaps (EFFI chunking, TLS client-auth CLI flag,
+  single-content send, Ergänzungen), re-verification procedure.
 - Opt-in interop suite (`crates/osci-cli/tests/interop.rs`, `make
   interop`): real store deliveries against Governikus' public
   OSCI-Manager test intermediary (gov.test.osci.de) using the library's
@@ -74,6 +82,14 @@ versions are internal milestones, not releases to a registry.
   opt-in exception (`ROSCI_INTEROP=1`, never in `make test`/`check`).
 
 ### Fixed
+- **`selection_mode: BY_RECENT_MODIFICATION` crashed the bridge.** The
+  constant exists in the library, but `FetchRequestAbstract
+.setSelectionMode` throws `IllegalArgumentException` for it — so that
+  request died with a stack trace (exit 6) instead of a clean protocol
+  error. Found during the standard-compliance comparison
+  (docs/STANDARD-COMPLIANCE.md §7); the mapping is removed, the mode
+  now fails like any unknown one, and the mapping matrix is pinned by
+  `OsciOpsTest`. docs/PROTOCOL.md corrected.
 - **Fetch warnings were treated as rejections.** A successful fetch
   whose response carries the spec's §6.6.10 warning 3800 „Es liegen
   weitere Zustellungen für diesen Client vor" alongside a success

@@ -108,4 +108,30 @@ class OsciOpsTest
     org.junit.jupiter.api.Assertions.assertThrows(BridgeException.class,
                                                   () -> OsciOps.checkFeedbackRows(feedback));
   }
+
+  @Test
+  void selectionModesMapToLibraryConstants()
+  {
+    assertEquals(de.osci.osci12.messagetypes.OSCIMessage.SELECT_BY_MESSAGE_ID,
+                 OsciOps.selectionMode(null));
+    assertEquals(de.osci.osci12.messagetypes.OSCIMessage.SELECT_BY_MESSAGE_ID,
+                 OsciOps.selectionMode("BY_MESSAGE_ID"));
+    assertEquals(de.osci.osci12.messagetypes.OSCIMessage.SELECT_ALL,
+                 OsciOps.selectionMode("ALL"));
+    assertEquals(de.osci.osci12.messagetypes.OSCIMessage.SELECT_BY_DATE_OF_RECEPTION,
+                 OsciOps.selectionMode("BY_DATE_OF_RECEPTION"));
+  }
+
+  @Test
+  void selectionModesTheLibraryCannotExpressFailCleanly()
+  {
+    // SELECT_BY_RECENT_MODIFICATION (2) exists as a constant but
+    // setSelectionMode throws IllegalArgumentException for it — mapping it
+    // used to crash the bridge with a stack trace instead of a clean
+    // protocol error. It must fail like any unknown mode.
+    org.junit.jupiter.api.Assertions.assertThrows(BridgeException.class,
+                                                  () -> OsciOps.selectionMode("BY_RECENT_MODIFICATION"));
+    org.junit.jupiter.api.Assertions.assertThrows(BridgeException.class,
+                                                  () -> OsciOps.selectionMode("GIBBERISH"));
+  }
 }

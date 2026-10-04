@@ -49,7 +49,7 @@ Field notes:
 | `content` | send | the XTA payload as opaque base64 bytes — the bridge never parses it |
 | `sign`, `encrypt` | send | content-level signing / encryption (defaults: true) |
 | `insecure_transport` | all dialogs | `false` = plain SOAP transport, for local test intermediaries (see AUDIT.md) |
-| `selection_mode` | fetch, process-card | `BY_MESSAGE_ID` \| `ALL` \| `BY_DATE_OF_RECEPTION` \| `BY_RECENT_MODIFICATION` |
+| `selection_mode` | fetch, process-card | `BY_MESSAGE_ID` \| `ALL` \| `BY_DATE_OF_RECEPTION` — anything else is a protocol error (`BY_RECENT_MODIFICATION` exists as a library constant but its setter rejects the value) |
 | `selection_rule` | fetch, process-card | the message id (or date rule) |
 
 ## Responses
