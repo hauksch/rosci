@@ -8,6 +8,19 @@ versions are internal milestones, not releases to a registry.
 ## [Unreleased]
 
 ### Added
+- Opt-in interop suite (`crates/osci-cli/tests/interop.rs`, `make
+  interop`): real store deliveries against Governikus' public
+  OSCI-Manager test intermediary (gov.test.osci.de) using the library's
+  published demo identities — secure send, `--no-encrypt`/`--no-sign`
+  variants (all answered with verified signed responses), structured
+  live rejections for `status`/`fetch`, loud failure on a wrong
+  intermediary certificate, and a DOI-identity rung gated on
+  `ROSCI_INTEROP_CERT`/`ROSCI_INTEROP_CERT_PIN`. Fixtures are the
+  vendor's public demo certs (PEM-converted, pinned by SHA256SUMS,
+  documented .gitignore exceptions — the intermediary rejects
+  self-signed senders, feedback 3707, so generated identities are not
+  an option). `make test`/`make check` never touch the network:
+  ungated, the suite skips at zero cost.
 - `docs/TEST-INFRASTRUCTURE.md`: briefing for the interop test suite —
   the open Governikus OSCI-Manager test intermediary
   (gov.test.osci.de, no registration; endpoint terms, verified

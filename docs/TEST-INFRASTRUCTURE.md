@@ -88,21 +88,26 @@ implementation time in case the demo PKI has rotated since.
 
 ## 4. rosci wiring
 
+The suite (`crates/osci-cli/tests/interop.rs`, `make interop`) encodes
+exactly this — verified live on 2026-10-04:
+
 ```sh
-export OSCI_CERT_PIN=…            # DOI test certificate PIN
+export OSCI_CERT_PIN=123456       # PIN of the demo keystores (public)
 rosci send meldung.xta \
   --intermediary http://gov.test.osci.de/osci-manager-entry/externalentry \
-  --intermediary-cert osci_manager_cipher_4096.cer \
-  --cert doi-test.p12 \
-  --to cert:bob_cipher_4096.cer \
-  --subject "interop smoke"
+  --intermediary-cert crates/osci-cli/tests/fixtures/interop/osci_manager_cipher_4096.pem \
+  --cert crates/osci-cli/tests/fixtures/interop/alice_signature_4096.p12 \
+  --decrypter-cert crates/osci-cli/tests/fixtures/interop/carol_cipher_4096.p12 \
+  --to cert:crates/osci-cli/tests/fixtures/interop/bob_cipher_4096.pem \
+  --subject "rosci-interop-$(date +%s)" --json
 ```
 
 Assertions for the happy path: exit code `0`, `response_signed: true`
-(real RSA-PSS response signature from a foreign implementation), clean
-Laufzettel/receipt, exit-code taxonomy intact for the negative paths
-(e.g. a rejected message → exit `4` with the mapped feedback text, not
-`[1050] de`).
+(real RSA-PSS response signature from a foreign implementation), a
+message id, and exit-code taxonomy intact for the negative paths —
+`status`/`fetch` against this instance are live rejections with mapped
+feedback (exit `4`), never hangs. Keep `--insecure-transport` off:
+message-layer security is the thing being tested.
 
 ## 5. Obtaining sender certificates (DOI / Verwaltungs-PKI)
 
@@ -179,21 +184,46 @@ contact as above; pricing is contract-dependent.
   suite: `--to cert:` + `--intermediary-cert` bypasses the DVDV
   entirely.
 
-## 6. Open items for the implementing agent
+## 6. Verified on the wire (2026-10-04 probes + `make interop` run)
 
-Marked assumptions — verify, then update this section:
+The former assumptions are now evidence, gathered by live probes and the
+interop suite (`crates/osci-cli/tests/interop.rs`, `make interop`):
 
-- **Sender acceptance:** does gov.test.osci.de accept a DOI test
-  certificate as sender identity? (Assumed yes — the instance is open
-  and unregistered — but unverified.)
-- **Passive-recipient addressing:** extract the exact recipient
-  address/subject conventions from `PassiveRecipient.java` in the
-  library repo; `bob_cipher_4096.cer` as content-encryption target is
-  the plausible default but not confirmed.
-- **Skip vs. fail:** unreachable endpoint must skip. Decide the
-  mechanism (`ROSCI_INTEROP=1` env gate, `#[ignore]`, `make interop`)
-  and wire it into the Makefile *without* touching `make test` /
-  `make check`.
+- **Baseline send works:** demo identities (alice signature + carol
+  cipher, Bob as addressee) against the live OSCI-Manager — exit 0,
+  `response_signed: true`, message ids with `osci_test_` prefix,
+  feedback `„Auftrag ausgeführt, Dialog beendet", "0800"`.
+- **Identity policy exists:** a freshly generated RSA-4096 self-signed
+  sender is rejected with `3707, „Certificate is selfsigned."` — the
+  instance does not accept arbitrary identities; the Governikus demo CA
+  (`CN=Governikus CA 8:PN`) is the accepted issuer class. This is why
+  the suite vendors the demo keystores, and why the DOI rung (a
+  V-PKI-issued identity) is the interesting next datum.
+- **`--no-encrypt` and `--no-sign` are accepted** by the intermediary
+  (signed responses either way).
+- **`status` and `fetch` are structured rejections** on this instance —
+  observed `9804` ("No or wrong messageId given!") and `9803` ("No
+  selection for: Selection Mode: -1") with properly mapped feedback
+  text and exit 4. No postboxes here; codes deliberately not asserted
+  in the suite (the OSCI-Manager may phrase them freely).
+- **Wrong intermediary cert fails loudly** (exit 4, message-level
+  diagnosis) — no hang, no silent fallback.
+- **Certificate hygiene:** server-side certs (`osci_manager_cipher_4096`,
+  `bob_cipher_4096`) valid until 2036-05-03, RSA-4096, keyUsage
+  digitalSignature + keyEncipherment + dataEncipherment, issued by the
+  demo CA. The demo `.p12` keystores use **RC2-40-CBC legacy
+  encryption** — JDK 21 reads them natively; OpenSSL 3 needs `-legacy`
+  to inspect them.
+- **File format matters:** the GitLab `.cer` files are DER; the Rust CLI
+  reads certificate files as UTF-8 text, so the vendored fixtures are
+  **PEM conversions** (`openssl x509 -inform der`), pinned by
+  `SHA256SUMS` next to them.
+
+Remaining open item, pending a certificate: **is a DOI test identity
+accepted?** The suite has the rung built in (`ROSCI_INTEROP_CERT` +
+`ROSCI_INTEROP_CERT_PIN`, test `doi_identity_is_accepted`) — obtaining
+the certificate is §5.1. Until then, "the DOI cert works against the
+test intermediary" remains unverified.
 
 ## 7. Sources
 

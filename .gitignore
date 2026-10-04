@@ -29,6 +29,14 @@ java/**/dependency-reduced-pom.xml
 .env
 .env.*
 
+# Exception: the interop fixtures are Governikus' PUBLIC demo keystores
+# (PIN "123456", published in osci-bib-java at tag 2.6.1, see
+# docs/TEST-INFRASTRUCTURE.md). They are not ours, not secret, and the
+# test intermediary rejects anything it did not issue itself anyway
+# (feedback code 3707). Pinned by SHA256SUMS next to them.
+!crates/osci-cli/tests/fixtures/interop/*.p12
+!crates/osci-cli/tests/fixtures/interop/*.pem
+
 # IDE and OS droppings — the bureaucracy of tooling, if you will
 .idea/
 .vscode/

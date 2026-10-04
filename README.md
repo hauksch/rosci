@@ -144,9 +144,11 @@ second layer on top. No test ever leaves localhost. Measured coverage via
 response parser with libFuzzer. Details and the honest limitations list:
 [docs/AUDIT.md](docs/AUDIT.md).
 
-For testing against a *real* intermediary (the open Governikus
-OSCI-Manager instance) and for obtaining real DOI/V-PKI sender
-certificates, see [docs/TEST-INFRASTRUCTURE.md](docs/TEST-INFRASTRUCTURE.md).
+For testing against a *real* intermediary: `make interop` runs the opt-in
+interop suite against the open Governikus OSCI-Manager instance
+(gov.test.osci.de — the only sanctioned network departure). Details,
+wire-verified evidence, and how to obtain real DOI/V-PKI sender
+certificates: [docs/TEST-INFRASTRUCTURE.md](docs/TEST-INFRASTRUCTURE.md).
 
 ## Mission rules
 
