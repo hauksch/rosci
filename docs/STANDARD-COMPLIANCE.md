@@ -81,7 +81,7 @@ all ten.
 | MediateDelivery | — | **none** — Abwicklungsauftrag (synchronous service-provider scenario) | — |
 | ProcessDelivery | — | **none** — supplier side of a service provider | — |
 | AcceptDelivery | — | **none** — supplier side (the mock plays intermediary/backend; rosci does not act as Dienstanbieter) | — |
-| PartialStore/FetchDelivery, ChunkInfo (EFFI) | library has it; bridge/CLI do not use it | **none — documented loud failure** for large payloads (~2 MB regression case) | e2e large-payload test |
+| PartialStore/FetchDelivery, ChunkInfo (EFFI) | bridge `send`/`fetch` + CLI `--chunk-size-kb` | **full** (opt-in): chunked store live-verified byte-exact (2 MB, 2 chunks) with manager-side reassembly; recipient fetches the reassembled message via plain FetchDelivery. The manager's own partial-fetch variant answered 9811 — the bridge's partial-fetch path stays for intermediaries that only serve chunks (untested live) | interop `chunked_send_round_trips…` |
 
 Forward/Mediate/Process/Accept being absent is **conformant** (§7
 license) — but it means rosci cannot speak to service providers
@@ -121,10 +121,11 @@ a gap; revisit if a use case demands it.
 
 ## 7. Deviations & gaps summary (the actionable list)
 
-1. **Chunking (EFFI)** — the one spec-relevant gap with operational
-   impact: intermediaries that require PartialStoreDelivery for large
-   messages are out of reach. Loud failure by design. *(Fix candidate:
-   expose the library's existing PartialStoreDelivery.)*
+1. ~~Chunking (EFFI)~~ — **closed**: opt-in `--chunk-size-kb` (send and
+   fetch), live-verified byte-exact against the OSCI-Manager. The
+   manager serves reassembled messages via plain fetch; its
+   partial-fetch variant returned 9811 and the bridge's partial-fetch
+   path remains for intermediaries that need it.
 2. **TLS client-auth flag** missing in the CLI (bridge supports it).
 3. **Single-content send** — the standard allows multiple content
    blocks/attachments per Zustellung; rosci sends exactly one opaque

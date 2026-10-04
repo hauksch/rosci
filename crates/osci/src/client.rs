@@ -71,6 +71,7 @@ impl OsciClient {
             client: self,
             xta,
             attachments: Vec::new(),
+            chunk_size_kb: None,
             recipient: None,
             subject: None,
             sign: true,
@@ -80,11 +81,23 @@ impl OsciClient {
 
     /// Fetches messages from our postbox.
     pub fn fetch(&mut self, query: FetchQuery) -> Result<Vec<FetchedMessage>, Error> {
+        self.fetch_with(query, None)
+    }
+
+    /// Fetch with EFFI partial fetch (KB per chunk) — for messages that
+    /// were stored chunked. A smaller-than-chunk message arrives as a
+    /// plain response.
+    pub fn fetch_with(
+        &mut self,
+        query: FetchQuery,
+        chunk_size_kb: Option<u64>,
+    ) -> Result<Vec<FetchedMessage>, Error> {
         let (mode, rule) = match &query {
             FetchQuery::ByMessageId(id) => ("BY_MESSAGE_ID", Some(id.clone())),
             FetchQuery::All => ("ALL", None),
         };
         let mut req = self.dialog_request("fetch");
+        req.chunk_size_kb = chunk_size_kb;
         req.selection_mode = Some(mode.to_string());
         req.selection_rule = rule;
         let rsp = self.bridge.call(req)?;
@@ -290,6 +303,7 @@ pub struct SendBuilder<'a> {
     client: &'a mut OsciClient,
     xta: Xta,
     attachments: Vec<Xta>,
+    chunk_size_kb: Option<u64>,
     recipient: Option<Recipient>,
     subject: Option<String>,
     sign: bool,
@@ -307,6 +321,15 @@ impl SendBuilder<'_> {
     /// the standard's term for what everyone else calls an attachment.
     pub fn attachment(mut self, xta: Xta) -> Self {
         self.attachments.push(xta);
+        self
+    }
+
+    /// Sends via EFFI chunked transfer with this many KB per chunk
+    /// (spec „Effiziente Übertragung großer Datenmengen"). Opt-in: the
+    /// fully built StoreDelivery is serialized, split and shipped as a
+    /// PartialStoreDelivery sequence.
+    pub fn chunk_size_kb(mut self, kb: u64) -> Self {
+        self.chunk_size_kb = Some(kb);
         self
     }
 
@@ -348,6 +371,7 @@ impl SendBuilder<'_> {
         } else {
             Some(self.attachments.iter().map(|a| a.to_payload()).collect())
         };
+        req.chunk_size_kb = self.chunk_size_kb;
         req.sign = Some(self.sign);
         req.encrypt = Some(self.encrypt);
 
@@ -400,6 +424,7 @@ fn base_request(op: &'static str) -> Request {
         subject: None,
         content: None,
         attachments: None,
+        chunk_size_kb: None,
         sign: None,
         encrypt: None,
         insecure_transport: None,

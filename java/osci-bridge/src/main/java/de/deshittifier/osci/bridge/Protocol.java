@@ -30,6 +30,14 @@ public final class Protocol
     public String subject; // send
     public Payload content; // send: the XTA payload as opaque bytes
     public List<Payload> attachments; // send: optional additional content parts
+    /**
+     * send: opt-in EFFI chunked transfer — the fully built StoreDelivery is
+     * serialized, split into chunks of this many KB and shipped as
+     * PartialStoreDelivery sequence (spec „Effiziente Übertragung großer
+     * Datenmengen"). fetch: partial fetch chunk size for messages that were
+     * stored chunked. Unset = plain StoreDelivery/FetchDelivery.
+     */
+    public Long chunk_size_kb;
     public Boolean sign; // send, default true
     public Boolean encrypt; // send, default true
     /**

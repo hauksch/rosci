@@ -615,6 +615,82 @@ fn attachments_round_trip_through_the_postbox() {
     let _ = fs::remove_file(&attachment);
 }
 
+/// §7 item 1, proven live: EFFI chunked transfer. A multi-MB payload is
+/// serialized into one StoreDelivery, split into PartialStoreDelivery
+/// chunks (KB per chunk, opt-in) and reassembled by the manager under the
+/// original message id — the recipient then picks it up with a PLAIN
+/// fetch, byte-exact. (The manager's partial-fetch variant answered 9811
+/// „No specified error" and is not needed against this instance; the
+/// bridge keeps it for intermediaries that only serve chunks.) This
+/// closes the one spec-relevant gap the compliance matrix started with.
+#[test]
+fn chunked_send_round_trips_through_the_postbox() {
+    let Some(()) = gate() else { return };
+    let payload = std::env::temp_dir().join(format!(
+        "rosci-interop-chunked-{}-{}.xta",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    // ~3 MB, deliberately binary (no XML sniff to argue with).
+    let payload_bytes: Vec<u8> = (0..3_000_000usize).map(|i| (i % 251) as u8).collect();
+    fs::write(&payload, &payload_bytes).unwrap();
+
+    let output = send_cmd(
+        &unique_subject("chunked"),
+        &payload,
+        &[],
+        &fixture("osci_manager_cipher_4096.pem"),
+        &fixture("alice_signature_4096.p12"),
+        Some(&fixture("carol_cipher_4096.p12")),
+        DEMO_PIN,
+    )
+    .args(["--chunk-size-kb", "1024"])
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON result");
+    let message_id = json["message_id"].as_str().expect("message id").to_owned();
+
+    let out_dir = tempfile::tempdir().expect("fetch out dir");
+    let mut cmd = rosci();
+    cmd.args(["fetch", "--message-id", &message_id, "--out"])
+        .arg(out_dir.path())
+        .args([
+            "--intermediary",
+            INTERMEDIARY,
+            "--intermediary-cert",
+            fixture("osci_manager_cipher_4096.pem").to_str().unwrap(),
+        ])
+        .arg("--cert")
+        .arg(fixture("bob_signature_4096.p12"))
+        .arg("--decrypter-cert")
+        .arg(fixture("bob_cipher_4096.p12"))
+        .args(["--pin", DEMO_PIN, "--json"]);
+    let fetch_out = cmd.assert().success().get_output().stdout.clone();
+    let fetched: serde_json::Value = serde_json::from_slice(&fetch_out).expect("valid JSON result");
+    let messages = fetched.as_array().expect("fetch yields a JSON array");
+    assert_eq!(messages.len(), 1, "exactly the one stored message");
+    let contents = messages[0]["encrypted_contents"]
+        .as_array()
+        .expect("encrypted contents");
+    use base64::Engine as _;
+    let delivered = contents
+        .iter()
+        .find_map(|c| {
+            c["data"]
+                .as_str()
+                .and_then(|d| base64::engine::general_purpose::STANDARD.decode(d).ok())
+        })
+        .expect("chunked message must arrive with decodable content");
+    assert_eq!(delivered, payload_bytes, "chunked round trip is byte-exact");
+    let _ = fs::remove_file(&payload);
+}
+
 /// Rung two: a real DOI test certificate (TeleSec DOI-CA, sub-domain
 /// „DOI-OSCI") instead of the demo identity — the open item from
 /// docs/TEST-INFRASTRUCTURE.md. Runs only when the certificate is

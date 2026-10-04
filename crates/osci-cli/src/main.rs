@@ -143,6 +143,11 @@ struct SendArgs {
     #[arg(long = "attachment", value_name = "FILE")]
     attachments: Vec<PathBuf>,
 
+    /// Send via EFFI chunked transfer with this many KB per chunk (for
+    /// intermediaries with size limits / large payloads).
+    #[arg(long, value_name = "KB")]
+    chunk_size_kb: Option<u64>,
+
     /// Send unsigned. Bold.
     #[arg(long)]
     no_sign: bool,
@@ -161,6 +166,11 @@ struct FetchArgs {
     /// Fetch only this message id.
     #[arg(long)]
     message_id: Option<String>,
+
+    /// Pull the message in EFFI chunks of this many KB (for messages that
+    /// were stored chunked).
+    #[arg(long, value_name = "KB")]
+    chunk_size_kb: Option<u64>,
 
     /// Fetch everything waiting.
     #[arg(long)]
@@ -490,6 +500,9 @@ fn cmd_send(args: SendArgs) -> Result<(), Error> {
         let xta = Xta::from_path(path)?;
         send = send.attachment(xta);
     }
+    if let Some(kb) = args.chunk_size_kb {
+        send = send.chunk_size_kb(kb);
+    }
     if let Some(subject) = &args.subject {
         send = send.subject(subject.clone());
     }
@@ -523,7 +536,7 @@ fn cmd_fetch(args: FetchArgs) -> Result<(), Error> {
         Some(id) => FetchQuery::ByMessageId(id.clone()),
         None => FetchQuery::All,
     };
-    let messages = client.fetch(query)?;
+    let messages = client.fetch_with(query, args.chunk_size_kb)?;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&messages)?);
@@ -659,6 +672,7 @@ fn cmd_version(args: VersionArgs) -> Result<(), Error> {
                 subject: None,
                 content: None,
                 attachments: None,
+                chunk_size_kb: None,
                 sign: None,
                 encrypt: None,
                 insecure_transport: None,

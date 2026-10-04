@@ -1,8 +1,10 @@
 package de.deshittifier.osci.bridge;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.security.GeneralSecurityException;
 import java.security.cert.X509Certificate;
@@ -17,6 +19,7 @@ import de.osci.osci12.OSCIException;
 import de.osci.osci12.common.DialogHandler;
 import de.osci.osci12.common.Constants;
 import de.osci.osci12.messageparts.Attachment;
+import de.osci.osci12.messageparts.ChunkInformation;
 import de.osci.osci12.messageparts.Content;
 import de.osci.osci12.messageparts.ContentContainer;
 import de.osci.osci12.messageparts.EncryptedDataOSCI;
@@ -30,9 +33,14 @@ import de.osci.osci12.messagetypes.GetMessageId;
 import de.osci.osci12.messagetypes.InitDialog;
 import de.osci.osci12.messagetypes.OSCIMessage;
 import de.osci.osci12.messagetypes.OSCIResponseTo;
+import de.osci.osci12.messagetypes.PartialFetchDelivery;
+import de.osci.osci12.messagetypes.PartialStoreDelivery;
+import de.osci.osci12.messagetypes.ResponseToFetchAbstract;
 import de.osci.osci12.messagetypes.ResponseToFetchDelivery;
 import de.osci.osci12.messagetypes.ResponseToFetchProcessCard;
 import de.osci.osci12.messagetypes.ResponseToGetMessageId;
+import de.osci.osci12.messagetypes.ResponseToPartialFetchDelivery;
+import de.osci.osci12.messagetypes.ResponseToPartialStoreDelivery;
 import de.osci.osci12.messagetypes.ResponseToStoreDelivery;
 import de.osci.osci12.messagetypes.StoreDelivery;
 import de.osci.osci12.roles.Addressee;
@@ -140,10 +148,48 @@ public final class OsciOps
         delivery.addContentContainer(coco);
       }
 
+      Protocol.Result result = new Protocol.Result();
+
+      if (req.chunk_size_kb != null && req.chunk_size_kb > 0)
+      {
+        // EFFI chunked transfer: serialize the fully built StoreDelivery
+        // (content, attachments, signatures, encryption and all), split it
+        // and ship each chunk as a PartialStoreDelivery carrying the same
+        // message id. The intermediary reassembles on its side; the last
+        // chunk's response carries the inside feedback of the reassembled
+        // StoreDelivery and its process card.
+        ByteArrayOutputStream assembled = new ByteArrayOutputStream();
+        delivery.writeMessage(assembled);
+        byte[] full = assembled.toByteArray();
+        int chunkBytes = req.chunk_size_kb.intValue() * 1024;
+        int totalChunks = (int) Math.max(1L, (full.length + (long) chunkBytes - 1) / chunkBytes);
+        long totalKb = full.length / 1024;
+
+        ResponseToPartialStoreDelivery last = null;
+        for (int i = 1; i <= totalChunks; i++)
+        {
+          int from = (i - 1) * chunkBytes;
+          int len = (int) Math.min((long) chunkBytes, full.length - (long) from);
+          ChunkInformation info = new ChunkInformation(req.chunk_size_kb, i, totalKb, totalChunks);
+          PartialStoreDelivery partial =
+            new PartialStoreDelivery(dialog, to, info, mid.getMessageId());
+          partial.setChunkBlob(new ByteArrayInputStream(full, from, len));
+          last = partial.send();
+          checkFeedback(last);
+        }
+
+        // The reassembled StoreDelivery's own feedback is what the user
+        // cares about; the chunk acks before it are bookkeeping.
+        String[][] inside = last.getInsideFeedback();
+        result.feedback = toProtocolFeedback(inside != null ? inside : last.getFeedback());
+        result.message_id = mid.getMessageId();
+        result.response_signed = last.isSigned();
+        return result;
+      }
+
       ResponseToStoreDelivery rsp = delivery.send();
       checkFeedback(rsp);
 
-      Protocol.Result result = new Protocol.Result();
       result.message_id = rsp.getMessageId();
       result.feedback = toProtocolFeedback(rsp.getFeedback());
       result.response_signed = rsp.isSigned();
@@ -183,12 +229,65 @@ public final class OsciOps
     {
       checkFeedback(new InitDialog(dialog).send());
 
-      FetchDelivery fetch = new FetchDelivery(dialog);
-      fetch.setSelectionMode(selectionMode(req.selection_mode));
-      if (req.selection_rule != null)
-        fetch.setSelectionRule(req.selection_rule);
+      ResponseToFetchDelivery rsp;
+      if (req.chunk_size_kb != null && req.chunk_size_kb > 0)
+      {
+        // Chunked fetch (EFFI): pull a stored message in chunks. A message
+        // smaller than the chunk size arrives as a plain response; anything
+        // else comes back as chunk 1 of N and we pull the remaining chunks
+        // before reassembling the response the usual parser can digest.
+        int chunkKb = req.chunk_size_kb.intValue();
+        ChunkInformation info = new ChunkInformation(chunkKb, 1);
+        PartialFetchDelivery partial = new PartialFetchDelivery(dialog, info);
+        partial.setSelectionMode(selectionMode(req.selection_mode != null
+          ? req.selection_mode : "BY_MESSAGE_ID"));
+        if (req.selection_rule != null)
+          partial.setSelectionRule(req.selection_rule);
 
-      ResponseToFetchDelivery rsp = fetch.send();
+        ResponseToFetchAbstract first = partial.send();
+        checkFeedback(first);
+        if (first instanceof ResponseToFetchDelivery small)
+        {
+          rsp = small;
+        }
+        else
+        {
+          ResponseToPartialFetchDelivery chunk1 = (ResponseToPartialFetchDelivery)first;
+          int total = chunk1.getChunkInformation().getTotalChunkNumbers();
+          ByteArrayOutputStream assembled = new ByteArrayOutputStream();
+          pipe(chunk1.getChunkBlob(), assembled);
+          List<Integer> received = new ArrayList<>();
+          received.add(1);
+          for (int i = 2; i <= total; i++)
+          {
+            info.setChunkNumber(i);
+            info.setReceivedChunks(received);
+            PartialFetchDelivery next = new PartialFetchDelivery(dialog, info);
+            // send() is typed to the abstract response; chunks 2..n are
+            // partial responses by contract. Anything else is an error
+            // with a name, not a ClassCastException.
+            ResponseToFetchAbstract chunkRsp = next.send();
+            checkFeedback(chunkRsp);
+            if (!(chunkRsp instanceof ResponseToPartialFetchDelivery chunk))
+              throw new BridgeException(
+                BridgeException.OSCI,
+                "chunked fetch: chunk " + i + " of " + total
+                  + " arrived as a non-partial response");
+            pipe(chunk.getChunkBlob(), assembled);
+            received.add(i);
+          }
+          rsp = ResponseToFetchDelivery.parseResponseToFetchDelivery(
+                  new ByteArrayInputStream(assembled.toByteArray()));
+        }
+      }
+      else
+      {
+        FetchDelivery fetch = new FetchDelivery(dialog);
+        fetch.setSelectionMode(selectionMode(req.selection_mode));
+        if (req.selection_rule != null)
+          fetch.setSelectionRule(req.selection_rule);
+        rsp = fetch.send();
+      }
       checkFeedback(rsp);
 
       Protocol.Result result = new Protocol.Result();
@@ -606,6 +705,14 @@ public final class OsciOps
     {
       return Base64.getEncoder().encodeToString(bounded.readAllBytes());
     }
+  }
+
+  private static void pipe(InputStream in, ByteArrayOutputStream out) throws IOException
+  {
+    byte[] buffer = new byte[64 * 1024];
+    int read;
+    while ((read = in.read(buffer)) >= 0)
+      out.write(buffer, 0, read);
   }
 
   private static String timestamp(Timestamp t)

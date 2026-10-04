@@ -199,6 +199,7 @@ impl BridgeHandle {
             subject: None,
             content: None,
             attachments: None,
+            chunk_size_kb: None,
             sign: None,
             encrypt: None,
             insecure_transport: None,

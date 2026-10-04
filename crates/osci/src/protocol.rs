@@ -35,6 +35,10 @@ pub struct Request {
     /// ContentContainer as the main payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<Payload>>,
+    /// send: opt-in EFFI chunked transfer (KB per chunk). fetch: partial
+    /// fetch chunk size for chunked-stored messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_size_kb: Option<u64>,
     #[serde(skip_serializing_if = "is_none")]
     pub sign: Option<bool>,
     #[serde(skip_serializing_if = "is_none")]
@@ -255,6 +259,7 @@ mod tests {
                 data: "WFRBCg==".into(),
             }),
             attachments: None,
+            chunk_size_kb: None,
             sign: Some(true),
             encrypt: Some(false),
             insecure_transport: None,

@@ -58,8 +58,10 @@ the host. See `container/LOCK.md` for the exact pinned toolchain.
 rosci send [-|<file.xta>] --to <cert:<path>|dvdv:<org-key>[:<category>]>
           [--intermediary URL --intermediary-cert FILE]
           [--cert FILE] [--decrypter-cert FILE] [--subject TEXT]
-          [--no-sign] [--no-encrypt] [--tls-ca FILE] [--json]
-rosci fetch [--message-id ID | --all] [--out DIR] [--json]
+          [--attachment FILE] [--chunk-size-kb KB]
+          [--no-sign] [--no-encrypt] [--tls-ca FILE]
+          [--tls-client-cert FILE] [--json]
+rosci fetch [--message-id ID | --all] [--chunk-size-kb KB] [--out DIR] [--json]
 rosci status <message-id> [--json]
 rosci dvdv find --org KEY [--category CAT | --all] [--file dvdv.json] [--json]
 rosci version [--require-bridge]
