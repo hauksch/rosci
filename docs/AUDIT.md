@@ -49,10 +49,10 @@ Test inventory:
 
 | suite | what it proves |
 |---|---|
-| `osci-bridge` JUnit (18) | JSON contract, PKI parsing, sign/verify + decrypt round-trips, request loop |
-| `osci` unit/integration (42) | protocol serde, bridge lifecycle (timeout/garbage/death), client flows, DVDV resolution, XTA sniffing |
-| `osci-cli` (20) | argument plumbing, output shape, exit codes |
-| e2e (3) | the real binary + real jar + mock intermediary: plain-transport send/status/fetch; **transport-encrypted send + status with ciphertext assertions**; failure exit codes |
+| `osci-bridge` JUnit (24) | JSON contract, PKI parsing, sign/verify + decrypt round-trips, request loop, feedback-row mapping, byte-exact fetch content, streamed request transport |
+| `osci` unit/integration (44) | protocol serde, bridge lifecycle (timeout/garbage/death/desync), client flows incl. protocol-version handshake, DVDV resolution, XTA sniffing |
+| `osci-cli` (29) | argument plumbing, output shape, exit codes, jar resolution, loopback guard, fetch write safety |
+| e2e (5) | the real binary + real jar + mock intermediary: plain-transport send/status/fetch; **transport-encrypted send + status with ciphertext assertions**; failure exit codes; large payload; tampered supplier signature |
 
 The e2e suite generates its own throwaway PKI per run (`tests/gen-pki.sh`)
 and talks only to `127.0.0.1`. No test touches any external service; the
@@ -94,8 +94,8 @@ more, that is the feature request to file.
 ### Reproducible jars
 
 `java/*/pom.xml` pin `project.build.outputTimestamp`; two clean builds of
-the same tree produce **byte-identical** bridge jars (verified 2026-10-03:
-`bce430b77806a706878a41fbc19efe12ceba9f2fb73536b40bfa83f3f9f8ebc1` twice).
+the same tree produce **byte-identical** bridge jars (verified 2026-10-04:
+`1d4f40d86469a62925674c26073ea5c366e1a8a56780474f81ae52848f72c830` twice).
 The Rust release binary is deterministic within a pinned container for the
 same reason: same tree, same toolchain, same bytes. What ran is what the
 sources say — the checksum proves it after the fact.
@@ -145,9 +145,13 @@ An audit that only lists virtues is a brochure. Known limits, in the open:
    `--insecure-transport` remains for focused content-level tests.
 2. **PIN handling.** PKCS#12 PINs travel as strings from flags/env/file
    into the bridge via stdio JSON. They are never written to disk or logs,
-   and the bridge process lives exactly as long as the CLI. Rust-side
-   copies are zeroized on drop (`zeroize` crate); what cannot be scrubbed
-   is the JVM-side string residency inside the bridge and the environment
+   and the bridge process lives exactly as long as the CLI. On the Rust
+   side, every *stored* copy is wrapped in `Zeroizing` and scrubbed on
+   drop (`zeroize` crate: the CLI's input handling and the `Identity`
+   values held by the library). What cannot be scrubbed, honestly: the
+   serialized JSON request line on the pipe (a wire-format necessity —
+   the bridge reads a JSON line, the line contains the PIN), the
+   JVM-side string residency inside the bridge, and the environment
    variable itself (readable from `/proc/<pid>/environ` by the same user
    for the process lifetime). If your threat model includes core dumps or
    process introspection, file a feature request (or a patch; patches age

@@ -16,7 +16,7 @@ const HAPPY: &str = r#"
 while IFS= read -r line; do
   case "$line" in
     *'"ping"'*)
-      echo '{"ok":true,"result":{"versions":{"bridge":"fake-1.0"}}}' ;;
+      echo '{"ok":true,"result":{"versions":{"bridge":"fake-1.0","protocol":"1"}}}' ;;
     *'"send"'*)
       echo '{"ok":true,"result":{"message_id":"fake-msg-17","feedback":[["alles gut","0000"]]}}' ;;
     *'"fetch"'*)
@@ -64,7 +64,70 @@ fn versions_handshake() {
     let mut client = test_client();
     let versions = client.versions().unwrap();
     assert_eq!(versions["bridge"], "fake-1.0");
+    assert_eq!(versions["protocol"], osci::protocol::PROTOCOL_VERSION);
     client.shutdown().unwrap();
+}
+
+#[test]
+fn wrong_protocol_version_is_rejected_at_the_handshake() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("future.sh");
+    std::fs::write(
+        &script,
+        r#"
+while IFS= read -r line; do
+  case "$line" in
+    *'"ping"'*) echo '{"ok":true,"result":{"versions":{"bridge":"v99","protocol":"99"}}}' ;;
+    *) sleep 30 ;;
+  esac
+done
+"#,
+    )
+    .unwrap();
+    std::mem::forget(dir); // the script must outlive the builder
+    let cfg = BridgeConfig::cmd(["bash", script.to_str().unwrap()])
+        .response_timeout(std::time::Duration::from_secs(5));
+    let err = OsciClient::builder()
+        .bridge_config(cfg)
+        .intermediary(Intermediary::new("http://fake/entry", "FAKECERT"))
+        .identity(Identity::from_p12_files(dummy_p12().as_path(), "123456", None, None).unwrap())
+        .build()
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::BridgeProtocol(ref m) if m.contains("99")),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn missing_protocol_version_is_rejected_at_the_handshake() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("mute_about_versions.sh");
+    std::fs::write(
+        &script,
+        r#"
+while IFS= read -r line; do
+  case "$line" in
+    *'"ping"'*) echo '{"ok":true,"result":{"versions":{"bridge":"shy"}}}' ;;
+    *) sleep 30 ;;
+  esac
+done
+"#,
+    )
+    .unwrap();
+    std::mem::forget(dir);
+    let cfg = BridgeConfig::cmd(["bash", script.to_str().unwrap()])
+        .response_timeout(std::time::Duration::from_secs(5));
+    let err = OsciClient::builder()
+        .bridge_config(cfg)
+        .intermediary(Intermediary::new("http://fake/entry", "FAKECERT"))
+        .identity(Identity::from_p12_files(dummy_p12().as_path(), "123456", None, None).unwrap())
+        .build()
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::BridgeProtocol(ref m) if m.contains("protocol version")),
+        "got: {err:?}"
+    );
 }
 
 #[test]

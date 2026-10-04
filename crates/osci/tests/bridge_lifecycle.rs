@@ -23,7 +23,7 @@ const HAPPY: &str = r#"
 while IFS= read -r line; do
   case "$line" in
     *'"ping"'*)
-      echo '{"ok":true,"result":{"versions":{"bridge":"fake-1.0"}}}' ;;
+      echo '{"ok":true,"result":{"versions":{"bridge":"fake-1.0","protocol":"1"}}}' ;;
     *'"send"'*)
       echo '{"ok":true,"result":{"message_id":"fake-msg-17","feedback":[["alles gut","0000"]]}}' ;;
     *'"fetch"'*)

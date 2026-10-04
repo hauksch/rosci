@@ -5,6 +5,69 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601. This repository is never published anywhere (mission rule), so
 versions are internal milestones, not releases to a registry.
 
+## [Unreleased]
+
+### Added
+- `docs/TEST-INFRASTRUCTURE.md`: briefing for the interop test suite —
+  the open Governikus OSCI-Manager test intermediary
+  (gov.test.osci.de, no registration; endpoint terms, verified
+  certificate paths in the library repo, rosci wiring) and the
+  walk-through for obtaining DOI/V-PKI sender certificates (test env
+  via the TeleSec DOI portal incl. the exact RA email subject, and
+  production). Mission rule 4 now names this as the single sanctioned
+  opt-in exception (`ROSCI_INTEROP=1`, never in `make test`/`check`).
+
+## [0.3.1] — 2026-10-04 — code-review fixes
+
+A second full review (ledger: `docs/REVIEW.md`, section F) found three
+P1 functional defects, eight P2 security/robustness gaps and a batch of
+P3 polish items. All P1/P2 items fixed and tested.
+
+### Fixed
+- **Intermediary feedback text reached no user**: the library's feedback
+  rows are `[lang, code, text]`, but they were forwarded raw while the
+  protocol (and the CLI renderer) expected `[text, code]` — a rejection
+  printed `[1050] de` instead of the actual reason. The bridge now maps
+  rows to the documented two-column shape.
+- **Fetched inline content was corrupted**: the bridge re-encoded the
+  library's lossy UTF-8 string interpretation of `Base64Content` back to
+  bytes, destroying any non-UTF-8 payload. Fetched content is now read
+  as a stream — byte-exact, contract restored.
+- **Release layout was broken from the CLI** (regression of review
+  finding B1): `--bridge-jar`'s cwd-relative default defeated the
+  exe-relative `../lib/osci-bridge.jar` lookup. The argument is now
+  optional and the library's resolution (env → exe-relative → cwd) runs.
+- `--insecure-transport` loopback guard: URL *userinfo* (`http://127.0.0.1:8080@evil.example/`)
+  was read as the host — the guard passed while the bridge connected to
+  the attacker host. Userinfo is now stripped before host parsing.
+- PIN handling matches the audit claim: `Identity`/`IdentityMsg` hold
+  pins in `Zeroizing`; AUDIT.md now states precisely which copies are
+  scrubbed and which are irreducible (the wire JSON line, the JVM).
+- The `ping` handshake validates the bridge protocol version (a v2 jar
+  can no longer fail confusingly mid-flow).
+- `rosci fetch` no longer overwrites existing files or follows pre-planted
+  symlinks; collisions get numbered siblings (`m.xta`, `m-1.xta`).
+- Bridge request bodies stream with `setFixedLengthStreamingMode` instead
+  of buffering on-heap behind a silently-ignored `Content-Length` header.
+- OSCI dialogs close on error paths too (`finally`); fetch decryption
+  failures of *our own* key material surface as `crypto` errors instead
+  of masquerading as the message subject; a killed bridge is reaped
+  (no more zombies for library consumers).
+- `make coverage` fails when the e2e suite fails (coverage data is still
+  emitted first).
+- Docs/build: README env table gained `OSCI_TLS_CA` and the new jar
+  default; LOCK.md gained the cargo-llvm-cov row and the observed
+  base-image digest; `.cache/` and `/.zcode/` gitignored, the committed
+  session plan file untracked; `hooks/pre-push` no longer executes its
+  own backticks; REVIEW C4 status corrected.
+
+### Known issues filed, not fixed
+P3 batch (F17–F29 in `docs/REVIEW.md`): exit-code taxonomy for mid-flow
+crypto failures, fetch subject mapping, TLS timeout validation, bridge
+stdin write timeouts, `insecure_transport` wire polarity (protocol v2
+item), license/notice aggregation for the shaded jar, and the rest of
+the ledger.
+
 ## [0.3.0] — 2026-10-03 — quality pass
 
 Closed every remaining audit gap from the repository review.

@@ -8,5 +8,5 @@
 # the mission statement in README.md. Twice.
 #
 echo "DENIED: pushing this repository anywhere is forbidden (mission rule: leave no traces online)." >&2
-echo "If you really must, remove hooks/pre-push and `git config core.hooksPath` first." >&2
+echo "If you really must, remove hooks/pre-push and 'git config core.hooksPath' first." >&2
 exit 1

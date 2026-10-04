@@ -6,6 +6,11 @@
 //! does. No silent schema drift; we've seen where that leads.
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
+
+/// The wire protocol version this crate speaks. Must match the bridge's
+/// `Protocol.VERSION` (Java); the `ping` handshake enforces it.
+pub const PROTOCOL_VERSION: &str = "1";
 
 fn is_none<T>(opt: &Option<T>) -> bool {
     opt.is_none()
@@ -55,17 +60,19 @@ pub struct Party {
     pub signature_cert: Option<String>,
 }
 
-/// Sender identity as PKCS#12 material (base64) plus PINs.
+/// Sender identity as PKCS#12 material (base64) plus PINs. The PINs ride
+/// in `Zeroizing` — the buffer this serializes into is plain by wire
+/// necessity, but every stored copy scrubs itself on drop.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IdentityMsg {
     #[serde(default, skip_serializing_if = "is_none")]
     pub signer_p12: Option<String>,
     #[serde(default, skip_serializing_if = "is_none")]
-    pub signer_pin: Option<String>,
+    pub signer_pin: Option<Zeroizing<String>>,
     #[serde(default, skip_serializing_if = "is_none")]
     pub decrypter_p12: Option<String>,
     #[serde(default, skip_serializing_if = "is_none")]
-    pub decrypter_pin: Option<String>,
+    pub decrypter_pin: Option<Zeroizing<String>>,
 }
 
 /// The XTA payload. Opaque bytes, base64 — we do not parse your XTA,
@@ -228,7 +235,7 @@ mod tests {
             }),
             identity: Some(IdentityMsg {
                 signer_p12: Some("c2VjcmV0".into()),
-                signer_pin: Some("123456".into()),
+                signer_pin: Some(Zeroizing::new("123456".to_string())),
                 decrypter_p12: None,
                 decrypter_pin: None,
             }),

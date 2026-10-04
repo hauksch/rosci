@@ -42,7 +42,7 @@ Everything builds inside a pinned container; the host stays Java-free
 ```sh
 make setup     # build the builder image, wire the no-push git hook
 make build     # Java bridge + mock jars, Rust workspace
-make test      # all 93 tests, incl. e2e against the local mock intermediary
+make test      # all 107 tests, incl. e2e against the local mock intermediary
 make check     # lint + test + audit + verify-deps + git-guard in one command
 make lint      # rustfmt + clippy -D warnings + mvn verify
 make audit     # cargo-deny: licenses, advisories, crate sources
@@ -73,7 +73,8 @@ no config files, no state, no traces:
 | `OSCI_CERT_PIN` | PKCS#12 PIN (or `--pinfile`, or `--pin` if you like living dangerously) |
 | `OSCI_CERT` / `OSCI_DECRYPTER_CERT` | identity bundles |
 | `OSCI_INTERMEDIARY` / `OSCI_INTERMEDIARY_CERT` | intermediary |
-| `OSCI_BRIDGE_JAR` | where the sidecar jar lives (default `osci-bridge.jar`) |
+| `OSCI_TLS_CA` | extra TLS trust anchor for the intermediary connection |
+| `OSCI_BRIDGE_JAR` | where the sidecar jar lives (default: `../lib/osci-bridge.jar` next to the `rosci` binary, else `./osci-bridge.jar`) |
 | `OSCI_DVDV_FILE` | DVDV extract for `--to dvdv:…` (default `dvdv.json`) |
 | `OSCI_JAVA_OPTS` | extra JVM flags (debugging hatch) |
 
@@ -127,7 +128,7 @@ native online client when credentials-based lookup is acceptable.
 
 ## Testing
 
-93 tests: Java unit (18), Rust unit/integration/CLI (65), e2e (5),
+107 tests: Java unit (24), Rust unit/integration/CLI (73), e2e (5),
 proptest invariants and doctests. The e2e suite runs the real binary +
 real jar against the mock intermediary with a per-run generated throwaway
 PKI — and every response is *signed* by the mock (XML-DSIG supplier
@@ -143,14 +144,20 @@ second layer on top. No test ever leaves localhost. Measured coverage via
 response parser with libFuzzer. Details and the honest limitations list:
 [docs/AUDIT.md](docs/AUDIT.md).
 
+For testing against a *real* intermediary (the open Governikus
+OSCI-Manager instance) and for obtaining real DOI/V-PKI sender
+certificates, see [docs/TEST-INFRASTRUCTURE.md](docs/TEST-INFRASTRUCTURE.md).
+
 ## Mission rules
 
 1. Everything lives in this directory — caches, Maven repo, cargo home.
 2. All building happens via `make`, inside pinned containers.
 3. This repository is never pushed anywhere (`make git-guard` +
    `hooks/pre-push` enforce it).
-4. Tests talk to localhost only. The public Governikus test intermediary
-   is never contacted.
+4. Tests talk to localhost only. The single sanctioned exception is the
+   opt-in interop suite against the public Governikus test intermediary
+   (gated behind `ROSCI_INTEROP=1`, never part of `make test`/`make
+   check`) — see [docs/TEST-INFRASTRUCTURE.md](docs/TEST-INFRASTRUCTURE.md).
 5. Comments may grumble about bureaucracy. Gently. It's not the Beamte's
    fault — they also just wanted to go home at 16:29.
 

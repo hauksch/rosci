@@ -4,7 +4,6 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -124,7 +123,7 @@ public final class OsciOps
 
       Protocol.Result result = new Protocol.Result();
       result.message_id = rsp.getMessageId();
-      result.feedback = rsp.getFeedback();
+      result.feedback = toProtocolFeedback(rsp.getFeedback());
       result.response_signed = rsp.isSigned();
       return result;
     }
@@ -171,7 +170,7 @@ public final class OsciOps
       checkFeedback(rsp);
 
       Protocol.Result result = new Protocol.Result();
-      result.feedback = rsp.getFeedback();
+      result.feedback = toProtocolFeedback(rsp.getFeedback());
       result.response_signed = rsp.isSigned();
       List<Protocol.FetchedMessage> messages = new ArrayList<>();
 
@@ -202,6 +201,14 @@ public final class OsciOps
             for (Content c : inner.getContents())
               m.encrypted_contents.add(toFetchedContent(c, "encrypted"));
           }
+          catch (BridgeException e)
+          {
+            // Our own key material is broken (bad PKCS#12, wrong PIN) —
+            // that is a crypto error of ours, not "not encrypted to us",
+            // and must surface as one instead of masquerading as the
+            // message subject.
+            throw e;
+          }
           catch (Exception e)
           {
             // Not encrypted to us, or extraction failed — report and move on,
@@ -216,7 +223,6 @@ public final class OsciOps
       }
 
       result.messages = messages;
-      exitDialogQuietly(dialog);
       return result;
     }
     catch (IOException e)
@@ -227,6 +233,13 @@ public final class OsciOps
     {
       throw new BridgeException(BridgeException.OSCI,
                                   e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+    }
+    finally
+    {
+      // On success AND on every error path — a rejected fetch must not
+      // abandon an open dialog (ConversationId, SequenceNumber) at the
+      // intermediary while this bridge process lives on.
+      exitDialogQuietly(dialog);
     }
   }
 
@@ -263,7 +276,7 @@ public final class OsciOps
       checkFeedback(rsp);
 
       Protocol.Result result = new Protocol.Result();
-      result.feedback = rsp.getFeedback();
+      result.feedback = toProtocolFeedback(rsp.getFeedback());
       result.response_signed = rsp.isSigned();
       result.process_cards = new ArrayList<>();
       ProcessCardBundle[] bundles = rsp.getProcessCardBundles();
@@ -295,7 +308,6 @@ public final class OsciOps
           result.process_cards.add(card);
         }
       }
-      exitDialogQuietly(dialog);
       return result;
     }
     catch (IOException e)
@@ -306,6 +318,12 @@ public final class OsciOps
     {
       throw new BridgeException(BridgeException.OSCI,
                                   e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+    }
+    finally
+    {
+      // Same contract as fetch: the dialog dies with the request, whatever
+      // the request died of.
+      exitDialogQuietly(dialog);
     }
   }
 
@@ -450,19 +468,43 @@ public final class OsciOps
       return;
     for (String[] row : feedback)
     {
-      // Row layout per library convention: [text, code]. Codes starting with
-      // '0' are the OSCI way of saying "yes, fine, everything ok, next please".
+      // Row layout per the library: [lang, code, text] — see FeedbackObject
+      // (lang = [0], code = [1], text = [2]). Codes starting with '0' are
+      // the OSCI way of saying "yes, fine, everything ok, next please".
       if (row.length > 1 && row[1] != null && !row[1].startsWith("0"))
         throw new BridgeException(BridgeException.OSCI,
                                   "intermediary rejected the request: " + rowText(row),
-                                  feedback);
+                                  toProtocolFeedback(feedback));
     }
   }
 
   private static String rowText(String[] row)
   {
     return "code=" + (row.length > 1 ? row[1] : "?")
-           + (row.length > 0 && row[0] != null ? " (" + row[0] + ")" : "");
+           + (row.length > 2 && row[2] != null ? " (" + row[2] + ")" : "");
+  }
+
+  /**
+   * Maps library feedback rows to the wire shape documented in
+   * docs/PROTOCOL.md: {@code [text, code]} per row. The library hands out
+   * three columns — {@code [lang, code, text]} — and forwarding them raw
+   * used to make the CLI print the language kürzel where the rejection
+   * reason belongs.
+   */
+  static String[][] toProtocolFeedback(String[][] rows)
+  {
+    if (rows == null)
+      return null;
+    String[][] mapped = new String[rows.length][];
+    for (int i = 0; i < rows.length; i++)
+    {
+      String[] row = rows[i];
+      String text = row.length > 2 && row[2] != null ? row[2]
+                    : (row.length > 0 ? row[0] : null);
+      String code = row.length > 1 ? row[1] : null;
+      mapped[i] = new String[]{text, code};
+    }
+    return mapped;
   }
 
   private static Boolean signaturesValidQuietly(ContentContainer cc)
@@ -477,7 +519,7 @@ public final class OsciOps
     }
   }
 
-  private static Protocol.FetchedContent toFetchedContent(Content c, String container)
+  static Protocol.FetchedContent toFetchedContent(Content c, String container)
   {
     Protocol.FetchedContent fc = new Protocol.FetchedContent();
     fc.container = container;
@@ -488,23 +530,21 @@ public final class OsciOps
         case Content.DATA:
           fc.filename = null;
           fc.content_type = "text/plain; charset=utf-8";
-          fc.data = Base64.getEncoder()
-                          .encodeToString(c.getContentData().getBytes(StandardCharsets.UTF_8));
+          // The stream, never getContentData(): that one is the library's
+          // UTF-8 String *interpretation* of the bytes, and re-encoding it
+          // does not survive contact with non-UTF-8 payloads.
+          fc.data = readContentAsBase64(c.getContentStream());
           break;
         case Content.ATTACHMENT_REFERENCE:
           Attachment a = c.getAttachment();
           fc.filename = a.getRefID();
           fc.content_type = a.getContentType();
-          try (InputStream in = a.getStream())
-          {
-            fc.data = Base64.getEncoder().encodeToString(in.readAllBytes());
-          }
+          fc.data = readContentAsBase64(a.getStream());
           break;
         default:
           fc.filename = null;
           fc.content_type = "application/octet-stream";
-          fc.data = Base64.getEncoder()
-                          .encodeToString(c.getContentStream().readAllBytes());
+          fc.data = readContentAsBase64(c.getContentStream());
           break;
       }
     }
@@ -513,6 +553,16 @@ public final class OsciOps
       throw new BridgeException(BridgeException.INTERNAL, "cannot read fetched content: " + e.getMessage());
     }
     return fc;
+  }
+
+  private static String readContentAsBase64(InputStream in) throws IOException
+  {
+    if (in == null)
+      throw new BridgeException(BridgeException.INTERNAL, "fetched content carries no data");
+    try (InputStream bounded = in)
+    {
+      return Base64.getEncoder().encodeToString(bounded.readAllBytes());
+    }
   }
 
   private static String timestamp(Timestamp t)

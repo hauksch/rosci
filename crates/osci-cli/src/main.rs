@@ -4,6 +4,7 @@
 //! command and zero ceremony. The heavy lifting happens in the Java
 //! sidecar (see `java/osci-bridge`); this binary is the friendly face.
 
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -98,9 +99,10 @@ struct ConnArgs {
     #[arg(long, requires = "insecure_transport")]
     insecure_transport_any_host: bool,
 
-    /// Path to the osci-bridge.jar.
-    #[arg(long, env = "OSCI_BRIDGE_JAR", default_value = "osci-bridge.jar")]
-    bridge_jar: PathBuf,
+    /// Path to the osci-bridge.jar. Default: ../lib/osci-bridge.jar next
+    /// to the rosci binary (the release layout), else ./osci-bridge.jar.
+    #[arg(long, env = "OSCI_BRIDGE_JAR")]
+    bridge_jar: Option<PathBuf>,
 
     /// Full bridge command, space separated (testing hook).
     #[arg(long, env = "OSCI_BRIDGE_CMD", hide = true)]
@@ -275,7 +277,13 @@ fn check_insecure_guard(conn: &ConnArgs, url: &str) -> Result<(), Error> {
 
 fn url_host_is_loopback(url: &str) -> bool {
     let after_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
-    let host_port = after_scheme.split(['/']).next().unwrap_or(after_scheme);
+    let mut host_port = after_scheme.split(['/']).next().unwrap_or(after_scheme);
+    // Userinfo (RFC 3986) precedes the host and may itself contain ':' and
+    // dots — strip it before host parsing, or "127.0.0.1:8080@evil.example"
+    // passes as loopback while the bridge connects to evil.example.
+    if let Some((_, rest)) = host_port.rsplit_once('@') {
+        host_port = rest;
+    }
     // IPv6 forms come bracketed; the port (if any) follows the bracket.
     let host = if let Some(rest) = host_port.strip_prefix('[') {
         rest.split(']').next().unwrap_or(rest)
@@ -325,7 +333,18 @@ fn bridge_config(conn: &ConnArgs) -> BridgeConfig {
     if let Some(cmd) = &conn.bridge_cmd {
         return BridgeConfig::cmd(cmd.split_whitespace());
     }
-    BridgeConfig::java_jar(&conn.bridge_jar)
+    BridgeConfig::java_jar(resolve_bridge_jar(conn.bridge_jar.as_deref()))
+}
+
+/// An explicit `--bridge-jar`/`OSCI_BRIDGE_JAR` wins; otherwise the
+/// library's default resolution runs (release layout next to the binary,
+/// then cwd). Going through the CLI default used to pin a cwd-relative
+/// path and defeated that lookup entirely.
+fn resolve_bridge_jar(arg: Option<&std::path::Path>) -> PathBuf {
+    match arg {
+        Some(path) => path.to_path_buf(),
+        None => osci::default_jar_path(),
+    }
 }
 
 fn build_client(conn: &ConnArgs, intermediary: Option<Intermediary>) -> Result<OsciClient, Error> {
@@ -502,11 +521,10 @@ fn cmd_fetch(args: FetchArgs) -> Result<(), Error> {
                     .filename
                     .clone()
                     .unwrap_or_else(|| format!("content-{wrote}.bin"));
-                let path = out_dir.join(sanitize_filename(&name));
                 let bytes = engine
                     .decode(&content.data)
                     .map_err(|e| Error::BridgeProtocol(format!("bridge sent bad base64: {e}")))?;
-                std::fs::write(&path, &bytes).map_err(Error::Io)?;
+                let path = write_fetched_file(&out_dir, &name, &bytes)?;
                 println!("  wrote {} ({} bytes)", path.display(), bytes.len());
                 wrote += 1;
             }
@@ -596,11 +614,9 @@ fn cmd_version(args: VersionArgs) -> Result<(), Error> {
     // A bare bridge ping — no identity, no intermediary, no drama.
     let cfg = match std::env::var("OSCI_BRIDGE_CMD") {
         Ok(cmd) => BridgeConfig::cmd(cmd.split_whitespace()),
-        Err(_) => BridgeConfig::java_jar(
-            std::env::var_os("OSCI_BRIDGE_JAR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("osci-bridge.jar")),
-        ),
+        // default_jar_path() consults OSCI_BRIDGE_JAR itself, then the
+        // release layout next to this binary, then the cwd.
+        Err(_) => BridgeConfig::java_jar(osci::default_jar_path()),
     };
     match BridgeHandle::spawn(&cfg) {
         Ok(mut bridge) => {
@@ -686,6 +702,50 @@ fn sanitize_filename(name: &str) -> String {
     }
 }
 
+/// Writes fetched bytes without ever overwriting: an existing target (and
+/// that includes a pre-planted symlink — `create_new` refuses those too)
+/// gets a numbered sibling instead. The intermediary chooses the filename;
+/// it does not get to clobber your `.bashrc` with it.
+fn write_fetched_file(
+    out_dir: &std::path::Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, Error> {
+    let sanitized = sanitize_filename(name);
+    let path = std::path::Path::new(&sanitized);
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| sanitized.clone());
+    let ext = path.extension().map(|e| e.to_string_lossy().into_owned());
+
+    for attempt in 0..1000u32 {
+        let candidate = match (&ext, attempt) {
+            (_, 0) => out_dir.join(&sanitized),
+            (None, n) => out_dir.join(format!("{stem}-{n}")),
+            (Some(e), n) => out_dir.join(format!("{stem}-{n}.{e}")),
+        };
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                file.write_all(bytes).map_err(Error::Io)?;
+                return Ok(candidate);
+            }
+            // Taken by a real file, a symlink, or anything else that exists:
+            // fall through to the next candidate name.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(Error::Io(e)),
+        }
+    }
+    Err(Error::Io(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        format!("{sanitized}: no free name after 1000 attempts"),
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -759,6 +819,81 @@ mod proptests {
 }
 
 #[cfg(test)]
+mod jar_resolution_tests {
+    use super::resolve_bridge_jar;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn explicit_jar_wins_over_library_default() {
+        let p = resolve_bridge_jar(Some(Path::new("/opt/dist/lib/osci-bridge.jar")));
+        assert_eq!(p, PathBuf::from("/opt/dist/lib/osci-bridge.jar"));
+    }
+
+    #[test]
+    fn absent_jar_defers_to_the_library_default() {
+        // The library resolves OSCI_BRIDGE_JAR, then the exe-relative
+        // release layout, then cwd — the exact chain the CLI used to
+        // short-circuit with a cwd-relative default_value.
+        let p = resolve_bridge_jar(None);
+        assert_eq!(p, osci::default_jar_path());
+    }
+}
+
+#[cfg(test)]
+mod fetch_write_tests {
+    use super::write_fetched_file;
+
+    #[test]
+    fn identical_names_get_numbered_siblings_never_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = write_fetched_file(dir.path(), "m.xta", b"eins").unwrap();
+        assert_eq!(first.file_name().unwrap(), "m.xta");
+        let second = write_fetched_file(dir.path(), "m.xta", b"zwei").unwrap();
+        assert_eq!(second.file_name().unwrap(), "m-1.xta");
+        // The first write is untouched — no silent clobbering.
+        assert_eq!(std::fs::read(&first).unwrap(), b"eins");
+        assert_eq!(std::fs::read(&second).unwrap(), b"zwei");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_targets_are_never_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim.txt");
+        std::fs::write(&victim, b"original").unwrap();
+        std::os::unix::fs::symlink(&victim, dir.path().join("link.txt")).unwrap();
+
+        let out = write_fetched_file(dir.path(), "link.txt", b"boese").unwrap();
+        // The write landed in a sibling, not through the symlink…
+        assert_eq!(out.file_name().unwrap(), "link-1.txt");
+        // …and the symlink's target still carries its original bytes.
+        assert_eq!(std::fs::read(&victim).unwrap(), b"original");
+    }
+
+    #[test]
+    fn dotfiles_keep_their_name_and_still_do_not_clobber() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = write_fetched_file(dir.path(), ".bashrc", b"boser alias").unwrap();
+        assert_eq!(first.file_name().unwrap(), ".bashrc");
+        let second = write_fetched_file(dir.path(), ".bashrc", b"noch einer").unwrap();
+        // Path::file_stem treats a leading dot as part of the stem, so the
+        // sibling is ".bashrc-1" — not "-1.bashrc".
+        assert_eq!(second.file_name().unwrap(), ".bashrc-1");
+        assert_eq!(std::fs::read(&first).unwrap(), b"boser alias");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_is_not_written_through() {
+        let dir = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink("gibt-es-nicht.txt", dir.path().join("dangling.txt")).unwrap();
+        let out = write_fetched_file(dir.path(), "dangling.txt", b"x").unwrap();
+        assert_eq!(out.file_name().unwrap(), "dangling-1.txt");
+        assert!(!dir.path().join("gibt-es-nicht.txt").exists());
+    }
+}
+
+#[cfg(test)]
 mod guard_tests {
     use super::url_host_is_loopback;
 
@@ -771,6 +906,10 @@ mod guard_tests {
             "https://127.42.0.1:1/",
             "http://[::1]:9000/entry",
             "http://[::1]/",
+            // Userinfo in front of a genuinely loopback host: the userinfo
+            // is decoration, the host is what the bridge connects to.
+            "http://user:geheim@127.0.0.1:8080/x",
+            "http://dienstlich@[::1]:9000/entry",
         ] {
             assert!(url_host_is_loopback(url), "{url} should be loopback");
         }
@@ -784,6 +923,12 @@ mod guard_tests {
             "http://10.0.0.1:1/",             // private, but not loopback
             "http://192.168.1.10/entry",      // same
             "http://127.0.0.1.evil.example/", // loopback as a subdomain — nice try
+            // Loopback as *userinfo*: the Rust guard used to read the
+            // userinfo as the host while the Java bridge connected to
+            // evil.example. The guard must read the same host Java does.
+            "http://127.0.0.1:8080@evil.example/entry",
+            "http://[::1]@evil.example/entry",
+            "http://user:geheim@10.1.2.3/x",
         ] {
             assert!(
                 !url_host_is_loopback(url),

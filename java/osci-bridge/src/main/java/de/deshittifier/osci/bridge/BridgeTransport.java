@@ -98,7 +98,11 @@ public final class BridgeTransport implements TransportI
       http.setRequestMethod("POST");
       http.setRequestProperty("Content-Type", "text/xml");
       http.setRequestProperty("charset", "utf-8");
-      http.setRequestProperty("Content-Length", Long.toString(length));
+      // Streaming mode, not setRequestProperty("Content-Length", ...): the
+      // latter is silently ignored by HttpURLConnection, which would buffer
+      // the whole request on-heap. Streaming sends as we write and fails
+      // loudly if the bytes written disagree with the announced length.
+      http.setFixedLengthStreamingMode(length);
       http.setUseCaches(false);
       http.setDoOutput(true);
       return http.getOutputStream();

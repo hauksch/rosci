@@ -249,6 +249,18 @@ impl Drop for BridgeHandle {
             if std::time::Instant::now() > deadline {
                 warn!("bridge ignored shutdown; killing it");
                 let _ = self.child.kill();
+                // kill() only signals; without a reap the JVM would sit in
+                // the process table until *we* exit — fine for the CLI, an
+                // accumulating leak for a library consumer that drops
+                // unresponsive bridges in a loop.
+                let reap_deadline = std::time::Instant::now() + Duration::from_secs(2);
+                while self.child.try_wait().map(|s| s.is_none()).unwrap_or(true) {
+                    if std::time::Instant::now() > reap_deadline {
+                        warn!("bridge survived SIGKILL; leaving it to init");
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
                 break;
             }
             std::thread::sleep(Duration::from_millis(50));

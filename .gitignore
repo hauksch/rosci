@@ -11,6 +11,10 @@ java/**/dependency-reduced-pom.xml
 /.m2-repo/
 /.deps/
 /.rustup/
+/.cache/
+
+# Agent/tool session droppings — same category as .idea/, just louder
+/.zcode/
 
 # Secrets and generated test PKI. Test certs are generated per-run in the
 # container and must never be committed. Yes, we trust ourselves less than

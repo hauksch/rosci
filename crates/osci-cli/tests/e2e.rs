@@ -189,6 +189,10 @@ impl E2e {
             repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
         )
         .env("OSCI_CERT_PIN", "testpin")
+        // The bridge renders OSCI timestamps in local time (the library's
+        // doing); the canned assertions are UTC. Inherit TZ through to the
+        // JVM so a CEST laptop and the UTC container assert the same thing.
+        .env("TZ", "UTC")
         .current_dir(&self.workdir);
         cmd
     }
@@ -656,6 +660,7 @@ fn tampered_response_signature_is_rejected_loudly() {
         repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
     )
     .env("OSCI_CERT_PIN", "testpin")
+    .env("TZ", "UTC")
     .current_dir(pki_dir.path())
     .arg("send")
     .arg("meldung.xta")

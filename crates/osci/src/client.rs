@@ -217,10 +217,23 @@ impl OsciClientBuilder {
 
         let mut bridge = BridgeHandle::spawn(&self.bridge)?;
         let rsp = bridge.call(base_request("ping"))?;
-        if rsp.result.and_then(|r| r.versions).is_none() {
-            return Err(Error::BridgeProtocol(
-                "bridge ping response carried no versions".into(),
-            ));
+        let versions = rsp.result.and_then(|r| r.versions).ok_or_else(|| {
+            Error::BridgeProtocol("bridge ping response carried no versions".into())
+        })?;
+        match versions.get("protocol").map(String::as_str) {
+            Some(v) if v == crate::protocol::PROTOCOL_VERSION => {}
+            Some(v) => {
+                return Err(Error::BridgeProtocol(format!(
+                    "bridge speaks protocol {v}, this library speaks {} — \
+                     the wire format is versioned, mixing versions is not supported",
+                    crate::protocol::PROTOCOL_VERSION
+                )))
+            }
+            None => {
+                return Err(Error::BridgeProtocol(
+                    "bridge ping response carries no protocol version".into(),
+                ))
+            }
         }
 
         Ok(OsciClient {
@@ -386,10 +399,10 @@ fn base_request(op: &'static str) -> Request {
     }
 }
 
-/// Where the release layout puts the jar, relative to the binary:
-/// `../lib/osci-bridge.jar` (see `make release`). Overridable via
-/// `OSCI_BRIDGE_JAR`, because environments are a fact of life.
-fn default_jar_path() -> std::path::PathBuf {
+/// Where the jar lives by default: `OSCI_BRIDGE_JAR` wins, then the
+/// release layout next to the running binary (`../lib/osci-bridge.jar`,
+/// see `make release`), then a cwd-relative `osci-bridge.jar`.
+pub fn default_jar_path() -> std::path::PathBuf {
     let env = std::env::var_os("OSCI_BRIDGE_JAR");
     let exe = std::env::current_exe().ok();
     resolve_jar_path(env.as_deref(), exe.as_deref())

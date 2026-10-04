@@ -1,5 +1,7 @@
 //! Configuration value types: intermediary, identity, TLS knobs.
 
+use zeroize::Zeroizing;
+
 use crate::error::Error;
 use crate::protocol::{IdentityMsg, Party, TlsMsg};
 
@@ -36,12 +38,16 @@ impl Intermediary {
 /// Sender identity: a signature PKCS#12 and (optionally) a separate
 /// cipher PKCS#12. In the wild these are often two files; the OSCI world
 /// never met a certificate it couldn't split into two more.
+///
+/// PINs are held in `Zeroizing` so every copy this crate makes is scrubbed
+/// on drop. What stays unscrubbable, honestly: the serialized JSON request
+/// line on the pipe and the JVM-side strings past it (docs/AUDIT.md).
 #[derive(Debug, Clone, Default)]
 pub struct Identity {
     signer_p12_b64: String,
-    signer_pin: String,
+    signer_pin: Zeroizing<String>,
     decrypter_p12_b64: Option<String>,
-    decrypter_pin: Option<String>,
+    decrypter_pin: Option<Zeroizing<String>>,
 }
 
 impl Identity {
@@ -61,12 +67,12 @@ impl Identity {
         };
         Ok(Self {
             signer_p12_b64: read_b64(signer_p12)?,
-            signer_pin: signer_pin.to_string(),
+            signer_pin: Zeroizing::new(signer_pin.to_string()),
             decrypter_p12_b64: match decrypter_p12 {
                 Some(p) => Some(read_b64(p)?),
                 None => None,
             },
-            decrypter_pin: decrypter_pin.map(str::to_string),
+            decrypter_pin: decrypter_pin.map(|p| Zeroizing::new(p.to_string())),
         })
     }
 

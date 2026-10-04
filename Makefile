@@ -94,10 +94,11 @@ coverage: image ## Measured coverage: cargo-llvm-cov (Rust) + JaCoCo (Java bridg
 	  && unzip -joq .deps/jacoco/jacoco.zip lib/jacocoagent.jar lib/jacococli.jar -d .deps/jacoco'
 	@echo "--- Java bridge, e2e (real jar, JaCoCo agent via OSCI_JAVA_OPTS) ---"
 	$(IN_CONTAINER) bash -c '\
-	  rm -f coverage/bridge-e2e.exec \
+	  rm -f coverage/bridge-e2e.exec coverage/e2e-test.log coverage/e2e-status \
 	  && OSCI_JAVA_OPTS="-javaagent:/work/.deps/jacoco/jacocoagent.jar=output=file,destfile=/work/coverage/bridge-e2e.exec,append=true" \
-	     cargo test -p osci-cli --test e2e >/dev/null 2>&1 || true; \
-	  test -f coverage/bridge-e2e.exec || { echo "no e2e execution data"; exit 1; }'
+	     cargo test -p osci-cli --test e2e >coverage/e2e-test.log 2>&1; \
+	  echo $$? > coverage/e2e-status; \
+	  test -f coverage/bridge-e2e.exec || { echo "no e2e execution data"; cat coverage/e2e-test.log; exit 1; }'
 	$(IN_CONTAINER) java -jar .deps/jacoco/jacococli.jar merge \
 	  java/osci-bridge/target/jacoco.exec coverage/bridge-e2e.exec \
 	  --destfile coverage/bridge-combined.exec >/dev/null
@@ -105,6 +106,12 @@ coverage: image ## Measured coverage: cargo-llvm-cov (Rust) + JaCoCo (Java bridg
 	  --classfiles java/osci-bridge/target/classes --csv coverage/bridge-combined.csv >/dev/null
 	@echo "--- Java bridge, unit + e2e combined ---"
 	$(IN_CONTAINER) bash container/jacoco-summary.sh coverage/bridge-combined.csv
+	@# Coverage data is still emitted when the suite fails, but the failure
+	@# itself must not drown in `|| true` — a green coverage number from a
+	@# red suite is exactly the kind of lie this project does not tell.
+	$(IN_CONTAINER) bash -c '\
+	  status=$$(cat coverage/e2e-status); rm -f coverage/e2e-status coverage/e2e-test.log; \
+	  if [ "$$status" -ne 0 ]; then echo "e2e suite FAILED during coverage run (exit $$status)"; exit 1; fi'
 	$(IN_CONTAINER) bash -c 'mkdir -p coverage && cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info'
 	@echo "Rust lcov report: coverage/lcov.info"
 

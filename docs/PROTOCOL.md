@@ -67,7 +67,9 @@ Success:
 `response_signed` is `true` when the intermediary's response carried a
 signature — since the library verifies automatically, a `true` here means
 a *verified* signature; a tampered signature never reaches the caller as
-success.
+success. `feedback` rows are exactly two columns, `[text, code]` — the
+bridge maps them from the OSCI library's three-column `[lang, code, text]`
+before they cross the wire.
 
 Failure:
 
@@ -89,7 +91,9 @@ Error `kind` is exactly one of:
 ## Lifecycle
 
 1. Caller spawns `java -jar osci-bridge.jar`.
-2. Caller sends `ping` and checks `result.versions` (handshake).
+2. Caller sends `ping` and checks `result.versions` (handshake). The Rust
+   side enforces this: a response without `versions.protocol` or with a
+   value other than `"1"` is a protocol violation, not a warning.
 3. Ops are exchanged one at a time; the bridge processes them sequentially.
 4. `shutdown` is acknowledged with `{"ok":true}` and the process exits 0.
    EOF on stdin has the same effect.
