@@ -6,7 +6,7 @@ build from scratch. Reproducibility is a checksum, not a vibe.
 ## Verify the build environment
 
 ```sh
-make setup            # builds the pinned builder image, wires the no-push hook
+make setup            # builds the pinned builder image, pins the builder image
 make verify-deps      # sha256-checks every maven artifact against the committed manifest
 make lock-info        # prints the exact tool versions recorded below
 ```
@@ -59,8 +59,8 @@ Test inventory:
 
 The e2e suite generates its own throwaway PKI per run (`tests/gen-pki.sh`)
 and talks only to `127.0.0.1`. No test touches any external service; the
-Governikus public test intermediary is deliberately never used, because the
-mission leaves no online traces.
+Governikus public test intermediary is deliberately excluded here — the
+opt-in interop suite covers it (docs/TEST-INFRASTRUCTURE.md).
 
 ### Measured coverage (`make coverage`)
 
@@ -191,7 +191,7 @@ An audit that only lists virtues is a brochure. Known limits, in the open:
 
 ## Repository hygiene rules
 
-- No git remote, ever. Enforced by `make git-guard` and `hooks/pre-push`.
+- Tests never talk to the network by default; the opt-in interop suite is the single sanctioned exception (docs/TEST-INFRASTRUCTURE.md).
 - Secrets (PINs, real PKI) never committed; `.gitignore` blocks the usual
   extensions. Test PKI is generated per-run and dies with the tempdir.
 - All builds run inside the pinned container; the host Java-free policy is

@@ -40,10 +40,10 @@ Everything builds inside a pinned container; the host stays Java-free
 (it has suffered enough).
 
 ```sh
-make setup     # build the builder image, wire the no-push git hook
+make setup     # build the builder image
 make build     # Java bridge + mock jars, Rust workspace
-make test      # all 107 tests, incl. e2e against the local mock intermediary
-make check     # lint + test + audit + verify-deps + git-guard in one command
+make test      # all 117 tests, incl. e2e against the local mock intermediary
+make check     # lint + test + audit + verify-deps in one command (CI runs it too)
 make lint      # rustfmt + clippy -D warnings + mvn verify
 make audit     # cargo-deny: licenses, advisories, crate sources
 make release   # dist/bin/rosci + dist/lib/osci-bridge.jar + SHA256SUMS
@@ -172,16 +172,17 @@ Where the OSCI 1.2 standard normatively lives and how rosci measures up
 against it (order-type matrix, security mechanisms, deviations): 
 [docs/STANDARD-COMPLIANCE.md](docs/STANDARD-COMPLIANCE.md).
 
-## Mission rules
+## Ground rules
 
 1. Everything lives in this directory — caches, Maven repo, cargo home.
-2. All building happens via `make`, inside pinned containers.
-3. This repository is never pushed anywhere (`make git-guard` +
-   `hooks/pre-push` enforce it).
-4. Tests talk to localhost only. The single sanctioned exception is the
-   opt-in interop suite against the public Governikus test intermediary
-   (gated behind `ROSCI_INTEROP=1`, never part of `make test`/`make
-   check`) — see [docs/TEST-INFRASTRUCTURE.md](docs/TEST-INFRASTRUCTURE.md).
+2. All building happens via `make`, inside pinned containers; CI runs
+   the identical commands on GitHub Actions.
+3. Tests talk to localhost by default. The single sanctioned exception
+   is the opt-in interop suite against the public Governikus test
+   intermediary (gated behind `ROSCI_INTEROP=1`, never part of
+   `make test`/`make check`/CI) — see
+   [docs/TEST-INFRASTRUCTURE.md](docs/TEST-INFRASTRUCTURE.md).
+4. Run `make check` before submitting anything; all gates run in CI.
 5. Comments may grumble about bureaucracy. Gently. It's not the Beamte's
    fault — they also just wanted to go home at 16:29.
 

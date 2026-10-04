@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # The build caches everything inside the workspace (ground rule 1) —
+      # cache those directories so CI does not re-download the Maven tree
+      # and crates on every run.
+      - name: Restore build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            .m2-repo
+            .cargo-home
+            .cache
+            .deps
+          key: >-
+            ${{ runner.os }}-osci-${{ hashFiles('container/Dockerfile.builder',
+            'Cargo.lock', 'java/osci-bridge/pom.xml', 'java/osci-mock/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-osci-
+
+      # Container parity: CI runs the same pinned builder image and the
+      # same gates as `make check` locally. The live interop suite cannot
+      # fire here — it is gated behind ROSCI_INTEROP=1, which CI never sets
+      # (docs/TEST-INFRASTRUCTURE.md).
+      - name: Lint
+        run: make OCI=docker lint
+
+      - name: Test
+        run: make OCI=docker test
+
+      - name: Audit (cargo-deny + OSV scan of the Maven tree)
+        run: make OCI=docker audit
+
+      - name: Verify dependency manifest
+        run: make OCI=docker verify-deps

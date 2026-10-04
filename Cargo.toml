@@ -7,8 +7,8 @@ exclude = ["fuzz"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-publish = false # mission rule: not on crates.io either
-repository = "none" # mission rule: this repo never leaves the building
+publish = false # crates.io publication is a separate, later decision
+repository = "none" # set when the public repository URL exists
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

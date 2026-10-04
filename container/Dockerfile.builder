@@ -2,7 +2,7 @@
 #
 # The one and only build environment for osci-deshittifier.
 # Pinned like a bureaucracy pins its processes — but on purpose, and with
-# checksums. Everything the mission needs to turn XTA into valid OSCI without
+# checksums. Everything the build needs to turn XTA into valid OSCI without
 # installing a single JVM on the host. The host has suffered enough.
 #
 # Base:  Eclipse Temurin JDK 21, digest-pinned (runs the OSCI lib's Java 11

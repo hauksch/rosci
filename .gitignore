@@ -4,14 +4,17 @@ target/
 java/**/target/
 java/**/dependency-reduced-pom.xml
 **/*.rs.bk
+*.log
 
-# Local caches. Everything must stay *inside* this directory (mission rule),
+# Local caches. Everything must stay *inside* this directory (ground rule),
 # but none of it belongs in git.
 /.cargo-home/
 /.m2-repo/
 /.deps/
 /.rustup/
 /.cache/
+# some tools with an unset TMPDIR create this literal directory
+/$TMPDIR/
 
 # Agent/tool session droppings — same category as .idea/, just louder
 /.zcode/

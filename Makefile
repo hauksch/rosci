@@ -1,9 +1,9 @@
 # osci-deshittifier — build control panel
 #
-# Mission rules enforced here:
+# Ground rules enforced here:
 #   * Everything builds INSIDE the pinned builder container. The host stays Java-free.
 #   * Everything caches INSIDE this directory (.cargo-home, .m2-repo) — gitignored.
-#   * Nothing is ever pushed. See `git-guard` and hooks/pre-push.
+#   * `make check` runs every gate; run it before submitting anything.
 #
 # Container runtime: docker or podman, first one found wins. Override with:
 #   make OCI=podman test
@@ -11,7 +11,7 @@
 # Prefer the real podman over the docker-shim: same engine, less banner noise.
 OCI            ?= $(shell command -v podman 2>/dev/null || command -v docker 2>/dev/null)
 ifeq ($(strip $(OCI)),)
-$(error No container runtime found. Install docker or podman — building on the bare host is against the mission rules.))
+$(error No container runtime found. Install docker or podman — building on the bare host is not supported.))
 endif
 
 WORK           := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
@@ -68,9 +68,7 @@ help: ## Show this help
 	  | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: setup
-setup: image ## Build the builder image, wire git hooks, verify we are push-less
-	@git config core.hooksPath hooks
-	@$(MAKE) --no-print-directory git-guard
+setup: image ## Build the builder image and verify the toolchain is ready
 	@echo "Setup complete. Builder image: $(IMAGE)"
 
 .PHONY: image
@@ -189,17 +187,8 @@ verify-deps: image ## Verify the maven cache against DEPENDENCY_MANIFEST.sha256
 	$(IN_CONTAINER) bash -c '\
 	  (cd .m2-repo && sha256sum -c ../java/osci-bridge/DEPENDENCY_MANIFEST.sha256)'
 
-.PHONY: git-guard
-git-guard: ## Fail if this repository ever grows a remote (mission rule: no traces)
-	@remotes=$$(git remote); \
-	if [ -n "$$remotes" ]; then \
-	  echo "VIOLATION: repository has remote(s): $$remotes" >&2; \
-	  echo "The mission says: never push this anywhere." >&2; exit 1; \
-	fi
-	@echo "git-guard: no remotes configured. Gut so."
-
 .PHONY: check
-check: lint test audit verify-deps git-guard ## Everything a good day needs: all gates in one command
+check: lint test audit verify-deps ## Everything a good day needs: all gates in one command (CI runs this too)
 	@echo "check: all gates green. Das Amt hätte nichts zu bemängeln."
 
 .PHONY: lock-info
@@ -211,5 +200,21 @@ shell: image ## Drop into an interactive shell in the builder container
 	$(IN_CONTAINER) /bin/bash
 
 .PHONY: clean
-clean: ## Remove build outputs and caches (keeps git history, obviously)
-	rm -rf target dist java/osci-bridge/target .cargo-home .m2-repo .cache
+clean: ## Remove all build outputs, caches and tool downloads (keeps the builder image; nothing tracked is touched)
+	rm -rf target dist coverage \
+	       java/osci-bridge/target java/osci-mock/target \
+	       java/osci-bridge/dependency-reduced-pom.xml \
+	       java/osci-mock/dependency-reduced-pom.xml \
+	       .deps .m2-repo .cargo-home .rustup \
+	       fuzz/target fuzz/corpus fuzz/coverage \
+	       './$$TMPDIR'
+	@# .cache can hold root-owned podman-root-trash from --remote runs
+	@# (containers deleting bind-mount files as container-root). Not
+	@# deletable without sudo — warn instead of aborting the clean.
+	@if ! rm -rf .cache 2>/dev/null; then \
+	  echo "clean: .cache is only partially removable (root-owned podman-root-trash — clear with sudo)" >&2; \
+	fi
+
+.PHONY: clean-image
+clean-image: ## Also remove the pinned builder image (make image rebuilds it)
+	$(OCI) rmi -f $(IMAGE)

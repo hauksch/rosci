@@ -118,7 +118,7 @@ a gap; revisit if a use case demands it.
 | TLS client authentication | full — `--tls-client-cert FILE` + `--tls-client-pin` (library builder + bridge were already there; the CLI now exposes them) | |
 | Timestamps / process cards | partial — see FetchProcessCard row; „Neuer Laufzettel" Ergänzung (2026) unsupported | |
 | XTA MessageMetaData (Ergänzung) | partial — `--metadata-author`/`--metadata-reader` identifiers + automatic MsgIdentification/MsgSize as a custom SOAP header; live-accepted by the OSCI-Manager. Fetch-side metadata retrieval and the fuller MMD structure (qualifiers, business scenario) not exposed | live send |
-| DVDV addressing | separate standard; rosci: local extract only (documented mission decision) | |
+| DVDV addressing | separate standard; rosci: local extract only (documented design decision) | |
 
 ## 7. Deviations & gaps summary (the actionable list)
 

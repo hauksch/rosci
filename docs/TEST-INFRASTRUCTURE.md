@@ -3,12 +3,12 @@
 Briefing for whoever implements the interop test suite. Everything below
 was verified against primary sources on 2026-10-04; the few assumptions
 are marked. Read §1 before writing a single line of test code — it is
-the difference between "useful" and "mission-rule violation".
+the difference between "useful" and "ground-rule violation".
 
 ## 1. Ground rules
 
-- The project's default posture is *never leave localhost* (README,
-  mission rule 4). The interop suite against the live test intermediary
+- The project's default posture is *never leave localhost* (README
+  ground rule 3). The interop suite against the live test intermediary
   is the **single sanctioned exception**: it must be **opt-in only**,
   e.g. gated on `ROSCI_INTEROP=1` in the environment (and/or `#[ignore]`
   tests driven by a dedicated `make interop` target). It must never run

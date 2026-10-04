@@ -2,10 +2,10 @@
 
 All notable changes to this project are documented in this file. Format
 loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are
-ISO-8601. This repository is never published anywhere (mission rule), so
-versions are internal milestones, not releases to a registry.
+ISO-8601. Versions are internal milestones; the entries below were
+written as the work happened and are kept as history.
 
-## [Unreleased]
+## [0.4.0] — 2026-10-04 — public-release preparation, EFFI, metadata, conformance
 
 ### Added
 - **TLS client authentication** for the intermediary connection:
