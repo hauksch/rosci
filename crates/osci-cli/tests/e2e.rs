@@ -679,3 +679,78 @@ fn tampered_response_signature_is_rejected_loudly() {
             .or(predicate::str::contains("Signatur")),
     );
 }
+
+/// Spec §7 obligation (2): rosci's wire traffic must be schema-conform.
+/// The mock dumps what crossed the wire; the validator checks the OSCI
+/// envelopes against the normative schemas vendored in schema/ (from the
+/// osci-bib-java 2.6.1 tag, Korrigenda 1-10 included). Skips when
+/// xmllint is unavailable (host development); the builder image ships it.
+#[test]
+fn wire_traffic_is_schema_valid() {
+    let Some((e2e, _mock)) = E2e::setup() else {
+        return;
+    };
+    if Command::new("xmllint").arg("--version").output().is_err() {
+        eprintln!("e2e: skipping (xmllint missing)");
+        return;
+    }
+
+    // One plain-transport send: request-N.xml and response-N.xml are then
+    // plain SOAP envelopes, directly schema-validatable.
+    e2e.rosci()
+        .arg("send")
+        .arg("meldung.xta")
+        .args(["--to", "dvdv:0241100012345"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--insecure-transport")
+        .arg("--subject")
+        .arg("schema check, plain")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .success();
+
+    // One fully-encrypted send: the raw request body is ciphertext, so the
+    // validator must exercise the decrypted inner envelope instead.
+    e2e.rosci()
+        .arg("send")
+        .arg("meldung.xta")
+        .args(["--to", "dvdv:0241100012345"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--subject")
+        .arg("schema check, encrypted")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .success();
+
+    let script = repo_root().join("container/xsd-validate.sh");
+    let output = Command::new("bash")
+        .arg(&script)
+        .arg(e2e.workdir.join("dump"))
+        .output()
+        .expect("run xsd-validate.sh");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "wire traffic must be schema-valid\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    eprintln!("{stdout}");
+    // The summary line counts documents actually validated — a validator
+    // that skips everything validates nothing.
+    let validated: u32 = stdout
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("xsd-validate: ")?
+                .split(' ')
+                .next()?
+                .parse()
+                .ok()
+        })
+        .unwrap_or(0);
+    assert!(
+        validated > 0,
+        "validator must have checked documents: {stdout}"
+    );
+}

@@ -133,8 +133,20 @@ a gap; revisit if a use case demands it.
    MessageMetaData. EFFI as above.
 5. **Warnings are hard failures** (except 3800) — stricter than §5,
    conservative direction, documented.
-6. **Schema-validation harness** for captured wire traffic — the one
-   missing *verification* instrument (§3.4 above).
+6. **Schema-validation harness** for captured wire traffic — built
+   (`container/xsd-validate.sh` + vendored `schema/`, e2e
+   `wire_traffic_is_schema_valid`): validates every rosci-produced
+   request envelope (both transports) against the normative soap\*
+   schemas. Response envelopes are intermediary-produced and counted
+   but not validated — which surfaced finding 7.
+7. **The mock's rich responses are not schema-conform** (found by the
+   harness): non-numeric ConversationId (`mock-conversation` — the
+   schema demands `\d+`), missing soap:actor/mustUnderstand attributes
+   on ControlBlock, IntermediaryCertificates misplaced relative to
+   SupplierSignature, and character content inside the (empty-by-schema)
+   SOAP Body. Harmless for client tests (the library parses it fine),
+   but the mock models a non-conformant intermediary; hardening it is
+   mock-side follow-up work, not a rosci defect.
 
 Fixed during this comparison: the bridge accepted `BY_RECENT_MODIFICATION`
 as a selection mode but the library's `setSelectionMode` rejects that

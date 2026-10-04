@@ -1,0 +1,24 @@
+<catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+	<uri name="http://www.w3.org/XML/1998/namespace"
+		uri="extern/xml.xsd" />
+	<uri name="http://schemas.xmlsoap.org/soap/envelope/"
+		uri="extern/soap-envelope.xsd" />
+	<uri name="http://www.w3.org/2000/09/xmldsig#"
+		uri="extern/xmldsig-core-schema.xsd" />
+	<uri name="http://www.w3.org/2001/04/xmlenc#"
+		uri="extern/xenc-schema.xsd" />
+	<uri name="http://www.w3.org/2009/xmlenc11#"
+		uri="extern/xenc-schema-11.xsd" />
+	<!-- schemaLocation system ids as they literally appear in the OSCI
+		schemas — xmllint resolves by system id first, network second. -->
+	<system systemId="http://www.w3.org/2001/xml.xsd"
+		uri="extern/xml.xsd" />
+	<system systemId="http://schemas.xmlsoap.org/soap/envelope/"
+		uri="extern/soap-envelope.xsd" />
+	<system systemId="http://www.w3.org/TR/2001/CR-xmldsig-core-20010419/xmldsig-core-schema.xsd"
+		uri="extern/xmldsig-core-schema.xsd" />
+	<system systemId="http://www.w3.org/TR/xmlenc-core/xenc-schema.xsd"
+		uri="extern/xenc-schema.xsd" />
+	<system systemId="https://www.w3.org/2008/xmlsec/Drafts/xmlenc-core-11/xenc-schema-11.xsd"
+		uri="extern/xenc-schema-11.xsd" />
+</catalog>

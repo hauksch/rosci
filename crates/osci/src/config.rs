@@ -96,7 +96,7 @@ pub struct Tls {
     /// TLS client authentication bundle (base64 PKCS#12).
     pub client_p12_b64: Option<String>,
     /// PIN for the TLS client bundle.
-    pub client_pin: Option<String>,
+    pub client_pin: Option<Zeroizing<String>>,
     /// TCP connect timeout in milliseconds.
     pub connect_timeout_ms: Option<u64>,
     /// Socket read timeout in milliseconds.
@@ -109,6 +109,22 @@ impl Tls {
     pub fn with_trust_anchor_file(mut self, path: &std::path::Path) -> Result<Self, Error> {
         let raw = read_certificate_file(path, "TLS trust anchor")?;
         self.trust_anchors.push(raw);
+        Ok(self)
+    }
+
+    /// Sets a TLS client-authentication bundle from a PKCS#12 file. The
+    /// bridge base64-decodes it into a KeyStore and presents it via a
+    /// KeyManagerFactory; parsing (and PIN errors) happen JVM-side.
+    pub fn with_client_p12_file(
+        mut self,
+        path: &std::path::Path,
+        pin: &str,
+    ) -> Result<Self, Error> {
+        use base64::Engine as _;
+        let buf = std::fs::read(path)
+            .map_err(|e| Error::Config(format!("cannot read {}: {e}", path.display())))?;
+        self.client_p12_b64 = Some(base64::engine::general_purpose::STANDARD.encode(&buf));
+        self.client_pin = Some(Zeroizing::new(pin.to_string()));
         Ok(self)
     }
 
@@ -227,6 +243,38 @@ mod tests {
         assert!(
             matches!(err, Error::Config(ref c) if c.contains("intermediary certificate") && c.contains("cannot read"))
         );
+    }
+
+    #[test]
+    fn tls_client_p12_lands_base64_encoded_in_the_msg() {
+        let dir = tempfile::tempdir().unwrap();
+        let p12 = dir.path().join("client.p12");
+        // Parsing happens JVM-side; Rust-side this is a base64 pass-through,
+        // so the bytes only need to survive the round trip.
+        std::fs::write(&p12, [0x42u8, 0x00, 0x13, 0x37]).unwrap();
+        let tls = Tls::default()
+            .with_client_p12_file(&p12, "tls-pin")
+            .unwrap();
+        let msg = tls.to_msg();
+        use base64::Engine as _;
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(msg.client_p12.as_deref().unwrap())
+                .unwrap(),
+            [0x42u8, 0x00, 0x13, 0x37]
+        );
+        assert_eq!(
+            msg.client_pin.as_deref().map(|p| p.as_str()),
+            Some("tls-pin")
+        );
+    }
+
+    #[test]
+    fn tls_client_p12_missing_file_is_a_config_error() {
+        let err = Tls::default()
+            .with_client_p12_file(std::path::Path::new("/gibt-es-nicht/client.p12"), "x")
+            .unwrap_err();
+        assert!(matches!(err, Error::Config(ref c) if c.contains("cannot read")));
     }
 
     #[test]

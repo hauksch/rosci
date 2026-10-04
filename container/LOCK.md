@@ -17,6 +17,7 @@ toolchain, OSV gate for the Java tree).
 | OSV gate    | `container/osv-java.sh` — scans all Maven artifacts from DEPENDENCY_MANIFEST.sha256 against api.osv.dev (`make audit`); build-time-only allowlist in the script |
 | Maven       | 3.9.11 (tarball, sha512-verified in Dockerfile)                              |
 | OpenSSL     | 3.0.2 (distro package, test-PKI generation)                                  |
+| libxml2-utils | 2.9.13 (distro package, `xmllint` — schema-validates captured OSCI traffic against schema/, added 2026-10-04) |
 | Linker      | gcc (Ubuntu jammy, distro package)                                           |
 
 Builder image (locally built, tag `osci-deshittifier-builder:1`):

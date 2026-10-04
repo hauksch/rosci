@@ -28,7 +28,9 @@ ARG MAVEN_VERSION=3.9.11
 ARG MAVEN_SHA512=bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978
 
 # gcc: rustc needs a linker; g++: libFuzzer's sanitizer runtime links via c++;
-# git: cargo may want it; openssl: test-PKI generation; zip/unzip: jar tooling
+# git: cargo may want it; openssl: test-PKI generation; zip/unzip: jar tooling;
+# libxml2-utils: xmllint, validates captured OSCI traffic against the
+# normative schemas (docs/STANDARD-COMPLIANCE.md §3.4)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -37,6 +39,7 @@ RUN apt-get update \
         g++ \
         libc6-dev \
         git \
+        libxml2-utils \
         openssl \
         unzip \
         zip \

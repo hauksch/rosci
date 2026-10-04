@@ -74,6 +74,7 @@ no config files, no state, no traces:
 | `OSCI_CERT` / `OSCI_DECRYPTER_CERT` | identity bundles |
 | `OSCI_INTERMEDIARY` / `OSCI_INTERMEDIARY_CERT` | intermediary |
 | `OSCI_TLS_CA` | extra TLS trust anchor for the intermediary connection |
+| `OSCI_TLS_CLIENT_CERT` / `OSCI_TLS_CLIENT_PIN` | mutual-TLS client bundle (PKCS#12) for the intermediary connection |
 | `OSCI_BRIDGE_JAR` | where the sidecar jar lives (default: `../lib/osci-bridge.jar` next to the `rosci` binary, else `./osci-bridge.jar`) |
 | `OSCI_DVDV_FILE` | DVDV extract for `--to dvdv:…` (default `dvdv.json`) |
 | `OSCI_JAVA_OPTS` | extra JVM flags (debugging hatch) |

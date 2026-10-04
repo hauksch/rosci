@@ -87,6 +87,16 @@ struct ConnArgs {
     #[arg(long, env = "OSCI_TLS_CA")]
     tls_ca: Option<PathBuf>,
 
+    /// TLS client-authentication bundle (PKCS#12) for mutual TLS with the
+    /// intermediary. Parsed JVM-side; a wrong PIN surfaces as a transport
+    /// error from the bridge.
+    #[arg(long, env = "OSCI_TLS_CLIENT_CERT")]
+    tls_client_cert: Option<PathBuf>,
+
+    /// PIN for --tls-client-cert (default: empty).
+    #[arg(long, env = "OSCI_TLS_CLIENT_PIN")]
+    tls_client_pin: Option<String>,
+
     /// Test mode: disable SOAP-transport encryption/signatures so local
     /// mock intermediaries can parse envelopes. Content crypto stays on.
     /// Refuses non-loopback intermediary hosts unless
@@ -371,11 +381,28 @@ fn build_client(conn: &ConnArgs, intermediary: Option<Intermediary>) -> Result<O
     if let Some(intermediary) = intermediary {
         builder = builder.intermediary(intermediary);
     }
-    if let Some(ca) = &conn.tls_ca {
-        let tls = osci::Tls::default().with_trust_anchor_file(ca)?;
+    if let Some(tls) = conn_tls(conn)? {
         builder = builder.tls(tls);
     }
     builder.build()
+}
+
+/// TLS knobs from ConnArgs: the trust anchor and, since the standard
+/// never met a certificate it couldn't split into one more, the optional
+/// mutual-TLS client bundle. `None` when nothing was configured.
+fn conn_tls(conn: &ConnArgs) -> Result<Option<osci::Tls>, Error> {
+    if conn.tls_ca.is_none() && conn.tls_client_cert.is_none() {
+        return Ok(None);
+    }
+    let mut tls = osci::Tls::default();
+    if let Some(ca) = &conn.tls_ca {
+        tls = tls.with_trust_anchor_file(ca)?;
+    }
+    if let Some(cert) = &conn.tls_client_cert {
+        let pin = conn.tls_client_pin.as_deref().unwrap_or("");
+        tls = tls.with_client_p12_file(cert, pin)?;
+    }
+    Ok(Some(tls))
 }
 
 fn conn_intermediary(conn: &ConnArgs) -> Result<Option<Intermediary>, Error> {
@@ -449,8 +476,8 @@ fn cmd_send(args: SendArgs) -> Result<(), Error> {
     if let Some(intermediary) = intermediary {
         builder = builder.intermediary(intermediary);
     }
-    if let Some(ca) = &args.conn.tls_ca {
-        builder = builder.tls(osci::Tls::default().with_trust_anchor_file(ca)?);
+    if let Some(tls) = conn_tls(&args.conn)? {
+        builder = builder.tls(tls);
     }
     let mut client = builder.build()?;
 

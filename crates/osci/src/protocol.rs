@@ -94,10 +94,10 @@ pub struct TlsMsg {
     #[serde(default, skip_serializing_if = "is_none")]
     pub client_p12: Option<String>,
     #[serde(default, skip_serializing_if = "is_none")]
-    pub client_pin: Option<String>,
-    #[serde(default, skip_serializing_if = "is_none")]
+    pub client_pin: Option<Zeroizing<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connect_timeout_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_timeout_ms: Option<u64>,
 }
 

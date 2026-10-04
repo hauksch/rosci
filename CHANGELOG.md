@@ -8,6 +8,24 @@ versions are internal milestones, not releases to a registry.
 ## [Unreleased]
 
 ### Added
+- **TLS client authentication** for the intermediary connection:
+  `--tls-client-cert FILE` + `--tls-client-pin`/`OSCI_TLS_CLIENT_PIN`.
+  The bridge already consumed mutual-TLS bundles — the CLI just never
+  exposed them (`Tls::with_client_p12_file` is the new library builder;
+  parsing and PIN errors surface JVM-side).
+- **Schema-conformance harness** (spec §7 obligation 2,
+  docs/STANDARD-COMPLIANCE.md §3.4): the normative OSCI 1.2 XSDs
+  (Korrigenda 1–10) are vendored in `schema/` (provenance + the one
+  whitespace deviation we had to apply in `order.xsd` recorded in
+  `schema/PROVENANCE.md` — libxml2 refuses a QName with trailing
+  whitespace that Xerces tolerates), the builder image gains
+  `libxml2-utils`, and the new e2e test `wire_traffic_is_schema_valid`
+  validates every rosci-produced request envelope — plain and encrypted
+  transport, decrypted inner envelopes included — against the matching
+  `soap<Auftrag>.xsd`. Six documents validated green. Responses are
+  intermediary-produced and counted but not validated; the harness
+  promptly found that the mock's rich responses are *not*
+  schema-conform (filed as §7 finding 7 in the compliance doc).
 - **Supply-chain hardening (external audit follow-up).** The builder image
   no longer pipes `sh.rustup.rs` into a shell: rustup-init 1.29.1 is
   downloaded from the static.rust-lang.org archive and sha256-verified
