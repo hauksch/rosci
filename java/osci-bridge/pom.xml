@@ -198,6 +198,17 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.6.0</version>
+        <configuration>
+          <systemPropertyVariables>
+            <!-- Negative tests deliberately trip the library's crypto path
+                 (decrypterFailsOnGarbageInput feeds it garbage); de.osci
+                 logs the expected BadBlockException at WARN through
+                 slf4j-simple, which made every `make release` look like a
+                 crash report. The assertions still prove the failure mode
+                 — only the expected log noise is muted. -->
+            <org.slf4j.simpleLogger.log.de.osci.osci12.encryption.Crypto>off</org.slf4j.simpleLogger.log.de.osci.osci12.encryption.Crypto>
+          </systemPropertyVariables>
+        </configuration>
       </plugin>
     </plugins>
   </build>

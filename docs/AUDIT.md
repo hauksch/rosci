@@ -99,21 +99,29 @@ fetch instead (its partial-fetch variant answered 9811; see
 docs/TEST-INFRASTRUCTURE.md). Without the flag, oversized payloads fail
 loudly rather than silently truncate.
 
-### Reproducible jars
+### Jar reproducibility — honest status: not fully reproducible
 
-`java/*/pom.xml` pin `project.build.outputTimestamp`; builds of the same
-tree are **byte-identical per build path** (verified 2026-10-04, after
-the interop/metadata bridge changes): `mvn clean package` →
-`434eef4f772a56a5eaa4fb2bf4979ce97d700887a7855d8915720d08f5def238`
-(twice), incremental `mvn package` →
-`0e3a11b3880759ff8f387578a0c13a14f58a908abbe6530e43abfce56426fda5`
-(twice). Clean and incremental differ from each other (shade-plugin
-archive ordering against a dirty vs fresh `target/`) — so release
-hashes are recorded from **clean** builds, and `make release` should
-stay the single source of published artifacts. The Rust release binary
-is deterministic within a pinned container for the same reason: same
-tree, same toolchain, same bytes. What ran is what the sources say —
-the checksum proves it after the fact.
+`java/*/pom.xml` pins `project.build.outputTimestamp`, so entry
+timestamps are fixed — but the shaded jar is **not** byte-stable across
+build environments. Observed on 2026-10-04, same sources: four distinct
+hashes across cache/target states (`0e3a11b3…`, `434eef4f…`,
+`847b5fdf…`, `e8f9dd7f…`), while repeated builds in a *fixed* state
+were stable (verified twice each for two of them). The maven-shade
+plugin's archive ordering/input set evidently varies with cache state.
+
+Consequences, honestly stated:
+- The property that holds is: **the recorded `dist/SHA256SUMS` matches
+  the artifacts shipped** — verify against it, not against a
+  cross-environment golden hash.
+- "What ran is what the sources say" is enforced by the pinned
+  toolchain + checksummed dependency manifest, not by jar-byte
+  reproducibility.
+- A true fix would be a normalization post-process (repack the shaded
+  jar with sorted entries and fixed metadata) — proposed, not
+  implemented.
+
+The Rust release binary IS deterministic within the pinned container
+(same tree, same toolchain, same bytes).
 
 ### Strict compilers
 
