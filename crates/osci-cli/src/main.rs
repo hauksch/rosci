@@ -139,6 +139,10 @@ struct SendArgs {
     #[arg(long, env = "OSCI_DVDV_FILE", default_value = "dvdv.json")]
     dvdv_file: PathBuf,
 
+    /// Additional content parts riding in the same Zustellung. Repeatable.
+    #[arg(long = "attachment", value_name = "FILE")]
+    attachments: Vec<PathBuf>,
+
     /// Send unsigned. Bold.
     #[arg(long)]
     no_sign: bool,
@@ -482,6 +486,10 @@ fn cmd_send(args: SendArgs) -> Result<(), Error> {
     let mut client = builder.build()?;
 
     let mut send = client.send_xta(xta).recipient(recipient);
+    for path in &args.attachments {
+        let xta = Xta::from_path(path)?;
+        send = send.attachment(xta);
+    }
     if let Some(subject) = &args.subject {
         send = send.subject(subject.clone());
     }
@@ -650,6 +658,7 @@ fn cmd_version(args: VersionArgs) -> Result<(), Error> {
                 recipient: None,
                 subject: None,
                 content: None,
+                attachments: None,
                 sign: None,
                 encrypt: None,
                 insecure_transport: None,

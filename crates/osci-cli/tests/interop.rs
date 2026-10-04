@@ -120,15 +120,18 @@ fn rosci() -> AssertCommand {
 fn send_cmd(
     subject: &str,
     payload: &Path,
+    attachments: &[PathBuf],
     intermediary_cert: &Path,
     cert: &Path,
     decrypter: Option<&Path>,
     pin: &str,
 ) -> AssertCommand {
     let mut cmd = rosci();
-    cmd.arg("send")
-        .arg(payload)
-        .arg("--intermediary")
+    cmd.arg("send").arg(payload);
+    for a in attachments {
+        cmd.arg("--attachment").arg(a);
+    }
+    cmd.arg("--intermediary")
         .arg(INTERMEDIARY)
         .arg("--intermediary-cert")
         .arg(intermediary_cert)
@@ -214,6 +217,7 @@ fn send_secure_delivery_gets_signed_response() {
     let output = send_cmd(
         &subject,
         &payload,
+        &[],
         &fixture("osci_manager_cipher_4096.pem"),
         &fixture("alice_signature_4096.p12"),
         Some(&fixture("carol_cipher_4096.p12")),
@@ -243,6 +247,7 @@ fn send_without_content_encryption_is_accepted() {
     let output = send_cmd(
         &unique_subject("noenc"),
         &payload,
+        &[],
         &fixture("osci_manager_cipher_4096.pem"),
         &fixture("alice_signature_4096.p12"),
         Some(&fixture("carol_cipher_4096.p12")),
@@ -269,6 +274,7 @@ fn send_without_signature_is_accepted() {
     let output = send_cmd(
         &unique_subject("nosign"),
         &payload,
+        &[],
         &fixture("osci_manager_cipher_4096.pem"),
         &fixture("alice_signature_4096.p12"),
         Some(&fixture("carol_cipher_4096.p12")),
@@ -298,6 +304,7 @@ fn status_and_fetch_are_structured_rejections() {
     let output = send_cmd(
         &unique_subject("status"),
         &payload,
+        &[],
         &fixture("osci_manager_cipher_4096.pem"),
         &fixture("alice_signature_4096.p12"),
         Some(&fixture("carol_cipher_4096.p12")),
@@ -355,6 +362,7 @@ fn wrong_intermediary_cert_fails_loudly() {
     let _ = send_cmd(
         &unique_subject("neg"),
         &payload,
+        &[],
         &fixture("bob_cipher_4096.pem"), // the WRONG intermediary key on purpose
         &fixture("alice_signature_4096.p12"),
         Some(&fixture("carol_cipher_4096.p12")),
@@ -381,6 +389,7 @@ fn fetch_delivers_the_stored_message_to_its_recipient() {
     let output = send_cmd(
         &unique_subject("fetch"),
         &payload,
+        &[],
         &fixture("osci_manager_cipher_4096.pem"),
         &fixture("alice_signature_4096.p12"),
         Some(&fixture("carol_cipher_4096.p12")),
@@ -436,6 +445,7 @@ fn fetch_by_a_party_without_the_message_is_rejected() {
     let output = send_cmd(
         &unique_subject("isolation"),
         &payload,
+        &[],
         &fixture("osci_manager_cipher_4096.pem"),
         &fixture("alice_signature_4096.p12"),
         Some(&fixture("carol_cipher_4096.p12")),
@@ -480,6 +490,7 @@ fn fetch_all_delivers_pending_messages_as_a_warning_not_an_error() {
     send_cmd(
         &unique_subject("all"),
         &payload,
+        &[],
         &fixture("osci_manager_cipher_4096.pem"),
         &fixture("alice_signature_4096.p12"),
         Some(&fixture("carol_cipher_4096.p12")),
@@ -525,6 +536,85 @@ fn fetch_all_delivers_pending_messages_as_a_warning_not_an_error() {
     let _ = fs::remove_file(&payload);
 }
 
+/// §7 item 3, proven live: an additional content part rides the same
+/// Zustellung through content encryption and the postbox, and comes back
+/// byte-exact when the recipient fetches by id.
+#[test]
+fn attachments_round_trip_through_the_postbox() {
+    let Some(()) = gate() else { return };
+    let payload = write_payload();
+    let attachment = std::env::temp_dir().join(format!(
+        "rosci-interop-attachment-{}-{}.bin",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let attachment_name = attachment
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // Deliberately not valid UTF-8: attachments are opaque bytes.
+    let attachment_bytes: Vec<u8> = (0..=255u8).chain(0..=255u8).collect();
+    fs::write(&attachment, &attachment_bytes).unwrap();
+
+    let output = send_cmd(
+        &unique_subject("attachment"),
+        &payload,
+        std::slice::from_ref(&attachment),
+        &fixture("osci_manager_cipher_4096.pem"),
+        &fixture("alice_signature_4096.p12"),
+        Some(&fixture("carol_cipher_4096.p12")),
+        DEMO_PIN,
+    )
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON result");
+    let message_id = json["message_id"].as_str().expect("message id").to_owned();
+
+    let out_dir = tempfile::tempdir().expect("fetch out dir");
+    let fetch_out = fetch_cmd(
+        &message_id,
+        out_dir.path(),
+        &fixture("bob_signature_4096.p12"),
+        &fixture("bob_cipher_4096.p12"),
+        DEMO_PIN,
+    )
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let fetched: serde_json::Value = serde_json::from_slice(&fetch_out).expect("valid JSON result");
+    let messages = fetched.as_array().expect("fetch yields a JSON array");
+    assert_eq!(messages.len(), 1, "exactly the one stored message");
+    let contents = messages[0]["encrypted_contents"]
+        .as_array()
+        .expect("encrypted contents");
+    assert!(
+        contents.len() >= 2,
+        "main content + attachment must both arrive: {fetched}"
+    );
+    let attachment_part = contents
+        .iter()
+        .find(|c| c["filename"].as_str() == Some(attachment_name.as_str()))
+        .unwrap_or_else(|| panic!("attachment must arrive under its refId: {fetched}"));
+    use base64::Engine as _;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(attachment_part["data"].as_str().expect("attachment data"))
+        .expect("attachment is base64");
+    assert_eq!(
+        decoded, attachment_bytes,
+        "attachment round trip is byte-exact"
+    );
+    let _ = fs::remove_file(&payload);
+    let _ = fs::remove_file(&attachment);
+}
+
 /// Rung two: a real DOI test certificate (TeleSec DOI-CA, sub-domain
 /// „DOI-OSCI") instead of the demo identity — the open item from
 /// docs/TEST-INFRASTRUCTURE.md. Runs only when the certificate is
@@ -542,6 +632,7 @@ fn doi_identity_is_accepted() {
     let output = send_cmd(
         &unique_subject("doi"),
         &payload,
+        &[],
         &fixture("osci_manager_cipher_4096.pem"),
         Path::new(&cert),
         None, // signer fallback: the DOI bundle carries the cipher key too

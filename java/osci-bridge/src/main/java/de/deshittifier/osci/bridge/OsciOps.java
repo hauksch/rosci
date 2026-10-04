@@ -103,6 +103,28 @@ public final class OsciOps
         : new Attachment(new ByteArrayInputStream(xta), filename);
       coco.addContent(new Content(attachment));
 
+      // Optional additional attachments: same container, same cipher
+      // treatment as the main content, each with its own symmetric key
+      // (the library generates one per Attachment).
+      if (req.attachments != null)
+      {
+        int n = 1;
+        for (Protocol.Payload att : req.attachments)
+        {
+          String refId = att.filename != null && !att.filename.isBlank()
+            ? att.filename : "attachment-" + n;
+          byte[] attBytes = Base64.getDecoder().decode(att.data);
+          Attachment a = encrypt
+            ? new Attachment(new ByteArrayInputStream(attBytes), refId,
+                             Constants.SYMMETRIC_CIPHER_ALGORITHM_AES256_GCM)
+            : new Attachment(new ByteArrayInputStream(attBytes), refId);
+          if (att.content_type != null && !att.content_type.isBlank())
+            a.setContentType(att.content_type);
+          coco.addContent(new Content(a));
+          n++;
+        }
+      }
+
       if (sign)
         coco.sign(me);
 

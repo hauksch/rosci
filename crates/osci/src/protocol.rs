@@ -31,6 +31,10 @@ pub struct Request {
     pub subject: Option<String>,
     #[serde(skip_serializing_if = "is_none")]
     pub content: Option<Payload>,
+    /// Optional additional content parts riding in the same
+    /// ContentContainer as the main payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<Payload>>,
     #[serde(skip_serializing_if = "is_none")]
     pub sign: Option<bool>,
     #[serde(skip_serializing_if = "is_none")]
@@ -250,6 +254,7 @@ mod tests {
                 content_type: Some("application/octet-stream".into()),
                 data: "WFRBCg==".into(),
             }),
+            attachments: None,
             sign: Some(true),
             encrypt: Some(false),
             insecure_transport: None,

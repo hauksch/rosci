@@ -70,6 +70,7 @@ impl OsciClient {
         SendBuilder {
             client: self,
             xta,
+            attachments: Vec::new(),
             recipient: None,
             subject: None,
             sign: true,
@@ -288,6 +289,7 @@ impl Recipient {
 pub struct SendBuilder<'a> {
     client: &'a mut OsciClient,
     xta: Xta,
+    attachments: Vec<Xta>,
     recipient: Option<Recipient>,
     subject: Option<String>,
     sign: bool,
@@ -298,6 +300,13 @@ impl SendBuilder<'_> {
     /// Sets the recipient (required before submit).
     pub fn recipient(mut self, recipient: Recipient) -> Self {
         self.recipient = Some(recipient);
+        self
+    }
+
+    /// Adds an additional content part riding in the same Zustellung —
+    /// the standard's term for what everyone else calls an attachment.
+    pub fn attachment(mut self, xta: Xta) -> Self {
+        self.attachments.push(xta);
         self
     }
 
@@ -334,6 +343,11 @@ impl SendBuilder<'_> {
         });
         req.subject = self.subject.clone();
         req.content = Some(self.xta.to_payload());
+        req.attachments = if self.attachments.is_empty() {
+            None
+        } else {
+            Some(self.attachments.iter().map(|a| a.to_payload()).collect())
+        };
         req.sign = Some(self.sign);
         req.encrypt = Some(self.encrypt);
 
@@ -385,6 +399,7 @@ fn base_request(op: &'static str) -> Request {
         recipient: None,
         subject: None,
         content: None,
+        attachments: None,
         sign: None,
         encrypt: None,
         insecure_transport: None,

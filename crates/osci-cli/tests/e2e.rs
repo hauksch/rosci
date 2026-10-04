@@ -630,6 +630,60 @@ fn large_payload_flows_through_both_transports() {
         .stdout(predicate::str::contains("message_id"));
 }
 
+/// §7 item 3 of the compliance matrix: additional content parts ride in
+/// the same Zustellung. The dump must carry the attachment's refId; the
+/// XTA payload stays encrypted as ever.
+#[test]
+fn send_with_attachments() {
+    let Some((e2e, _mock)) = E2e::setup() else {
+        return;
+    };
+    std::fs::write(
+        e2e.workdir.join("anhang.txt"),
+        "attachment payload with Umlaute: öäü ß\n",
+    )
+    .unwrap();
+
+    e2e.rosci()
+        .arg("send")
+        .arg("meldung.xta")
+        .args(["--attachment", "anhang.txt"])
+        .args(["--to", "dvdv:0241100012345"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--subject")
+        .arg("sendung mit anhang")
+        .arg("--json")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .success();
+
+    let dump_dir = e2e.workdir.join("dump");
+    let store_envelope = read_dump_lossy(
+        &dump_dir
+            .read_dir()
+            .expect("dump dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| {
+                std::fs::read(p)
+                    .map(|c| String::from_utf8_lossy(&c).contains("storeDelivery"))
+                    .unwrap_or(false)
+            })
+            .expect("store delivery dump"),
+    );
+    assert!(
+        store_envelope.contains("anhang.txt"),
+        "attachment refId must ride along"
+    );
+    // The old single-content bug this pins shut: an attachment must not
+    // silently vanish between CLI and wire.
+    assert!(
+        store_envelope.contains("sendung mit anhang"),
+        "subject must ride along"
+    );
+}
+
 #[test]
 fn tampered_response_signature_is_rejected_loudly() {
     // A dedicated mock that signs correctly and then flips one byte of the

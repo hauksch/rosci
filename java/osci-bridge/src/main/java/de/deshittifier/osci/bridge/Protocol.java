@@ -29,6 +29,7 @@ public final class Protocol
     public Party recipient; // send
     public String subject; // send
     public Payload content; // send: the XTA payload as opaque bytes
+    public List<Payload> attachments; // send: optional additional content parts
     public Boolean sign; // send, default true
     public Boolean encrypt; // send, default true
     /**

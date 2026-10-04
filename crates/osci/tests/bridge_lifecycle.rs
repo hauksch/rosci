@@ -53,6 +53,7 @@ fn request(op: &'static str) -> osci::protocol::Request {
         recipient: None,
         subject: None,
         content: None,
+        attachments: None,
         sign: None,
         encrypt: None,
         insecure_transport: None,
