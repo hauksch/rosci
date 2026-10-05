@@ -1,4 +1,6 @@
-# osci-deshittifier
+# rosci
+
+[![ci](https://github.com/hauksch/rosci/actions/workflows/ci.yml/badge.svg)](https://github.com/hauksch/rosci/actions/workflows/ci.yml)
 
 > **`rosci` — the curl of OSCI.** Send an arbitrary XTA message to any OSCI
 > recipient, resolved by recipient certificate or via DVDV, without first
@@ -191,6 +193,14 @@ against it (order-type matrix, security mechanisms, deviations):
 4. Run `make check` before submitting anything; all gates run in CI.
 5. Comments may grumble about bureaucracy. Gently. It's not the Beamte's
    fault — they also just wanted to go home at 16:29.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — the short version: build in
+the container, keep the tests honest, `make check` green before
+submitting. Security reports go through
+[SECURITY.md](SECURITY.md) (private GitHub reporting, please — not
+public issues).
 
 ## License
 

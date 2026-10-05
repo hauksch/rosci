@@ -147,6 +147,9 @@ RNG.
 
 ## G — full file-by-file review (2026-10-05, third pass)
 
+> Note: ledger paths predate the project rename to `rosci` — Java paths
+> read `de/deshittifier/…` where the tree now says `de/rosci/…`.
+
 **Method.** All 139 tracked files reviewed after ~9,100 changed lines
 since F (0.3.1). Five independent fresh-eyes reviewers, one per cluster
 (Rust library, Rust CLI+tests, Java bridge, mock+harness, docs+configs),

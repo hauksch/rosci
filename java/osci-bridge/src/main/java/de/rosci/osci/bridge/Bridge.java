@@ -1,4 +1,4 @@
-package de.deshittifier.osci.bridge;
+package de.rosci.osci.bridge;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;

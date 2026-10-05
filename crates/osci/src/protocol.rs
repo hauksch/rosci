@@ -1,7 +1,7 @@
 //! Wire types for the bridge line protocol (v1).
 //!
 //! Field names are identical on both sides of the pipe — the Java class
-//! `de.deshittifier.osci.bridge.Protocol` is the normative twin of this
+//! `de.rosci.osci.bridge.Protocol` is the normative twin of this
 //! module. If either side changes, both change, or the handshake version
 //! does. No silent schema drift; we've seen where that leads.
 

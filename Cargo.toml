@@ -8,7 +8,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 publish = false # crates.io publication is a separate, later decision
-repository = "none" # set when the public repository URL exists
+repository = "https://github.com/hauksch/rosci"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

@@ -1,4 +1,4 @@
-package de.deshittifier.osci.bridge;
+package de.rosci.osci.bridge;
 
 /**
  * The only exception taxonomy this bridge knows. Five kinds, no subcommittees,

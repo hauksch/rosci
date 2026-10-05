@@ -5,6 +5,14 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are
 ISO-8601. Versions are internal milestones; the entries below were
 written as the work happened and are kept as history.
 
+## [Unreleased]
+
+### Changed
+- **Renamed:** the working name `osci-deshittifier` is retired — the
+  project is now **rosci** (build image `rosci-builder`, Java
+  namespaces `de.rosci.osci.{bridge,mock}`, protocol vendor string,
+  docs). History is intentionally untouched.
+
 ## [0.4.0] — 2026-10-04 — public-release preparation, EFFI, metadata, conformance
 
 ### Added

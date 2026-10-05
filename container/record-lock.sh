@@ -10,10 +10,9 @@ read -r -a OCI_CMD <<< "${OCI:-$(command -v docker || command -v podman)}"
 IMAGE="${1:?usage: record-lock.sh <image-ref>}"
 
 echo "recorded:   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "base image: $(awk '$1=="FROM"{print $2; exit}' "$(dirname "$0")/../Dockerfile.builder")"
+echo "base image: $(awk '$1=="FROM"{print $2; exit}' "$(dirname "$0")/Dockerfile.builder")"
 echo "rust:       $("${OCI_CMD[@]}" run --rm "$IMAGE" rustc --version | awk '{print $2}') (rustup-pinned)"
 echo "maven:      $("${OCI_CMD[@]}" run --rm "$IMAGE" mvn --version | head -1 | awk '{print $3}')"
 echo "java:       $("${OCI_CMD[@]}" run --rm "$IMAGE" java -version 2>&1 | head -1)"
-echo "builder digest:"
-"${OCI_CMD[@]}" image inspect "$IMAGE" --format '  {{index .RepoDigests 0}}' 2>/dev/null || \
-  echo "  (locally built image — no repo digest; base pinned by tag + build args)"
+echo "builder image id (locally built — RepoDigests only exist after a push):"
+"${OCI_CMD[@]}" image inspect "$IMAGE" --format '  {{.ID}}'

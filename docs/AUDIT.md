@@ -108,6 +108,8 @@ hashes across cache/target states (`0e3a11b3…`, `434eef4f…`,
 `847b5fdf…`, `e8f9dd7f…`), while repeated builds in a *fixed* state
 were stable (verified twice each for two of them). The maven-shade
 plugin's archive ordering/input set evidently varies with cache state.
+Re-recorded after the rosci rename (2026-10-05): clean builds of the
+renamed tree are stable at `0dd6bb79…` (verified twice).
 
 Consequences, honestly stated:
 - The property that holds is: **the recorded `dist/SHA256SUMS` matches

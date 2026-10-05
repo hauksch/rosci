@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# The one and only build environment for osci-deshittifier.
+# The one and only build environment for rosci.
 # Pinned like a bureaucracy pins its processes — but on purpose, and with
 # checksums. Everything the build needs to turn XTA into valid OSCI without
 # installing a single JVM on the host. The host has suffered enough.

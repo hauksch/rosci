@@ -1,4 +1,4 @@
-package de.deshittifier.osci.bridge;
+package de.rosci.osci.bridge;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;

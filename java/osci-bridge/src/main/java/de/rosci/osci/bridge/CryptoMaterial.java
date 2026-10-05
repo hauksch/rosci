@@ -1,4 +1,4 @@
-package de.deshittifier.osci.bridge;
+package de.rosci.osci.bridge;
 
 import java.io.ByteArrayInputStream;
 import java.security.GeneralSecurityException;
@@ -84,7 +84,7 @@ public final class CryptoMaterial
     @Override
     public String getVendor()
     {
-      return "osci-deshittifier";
+      return "rosci";
     }
 
     @Override
@@ -165,7 +165,7 @@ public final class CryptoMaterial
     @Override
     public String getVendor()
     {
-      return "osci-deshittifier";
+      return "rosci";
     }
 
     @Override

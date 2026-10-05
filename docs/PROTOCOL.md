@@ -8,7 +8,7 @@ defend with teeth.
 Normative implementations:
 
 - Rust side: `crates/osci/src/protocol.rs`
-- Java side: `java/osci-bridge/src/main/java/de/deshittifier/osci/bridge/Protocol.java`
+- Java side: `java/osci-bridge/src/main/java/de/rosci/osci/bridge/Protocol.java`
 
 Both sides name fields identically (snake_case). Changing a field name,
 type, or semantics requires bumping the protocol version in both files and

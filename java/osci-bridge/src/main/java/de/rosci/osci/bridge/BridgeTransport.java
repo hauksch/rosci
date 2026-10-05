@@ -1,4 +1,4 @@
-package de.deshittifier.osci.bridge;
+package de.rosci.osci.bridge;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -40,7 +40,7 @@ public final class BridgeTransport implements TransportI
   @Override
   public String getVendor()
   {
-    return "osci-deshittifier";
+    return "rosci";
   }
 
   @Override

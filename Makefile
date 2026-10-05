@@ -1,4 +1,4 @@
-# osci-deshittifier — build control panel
+# rosci — build control panel
 #
 # Ground rules enforced here:
 #   * Everything builds INSIDE the pinned builder container. The host stays Java-free.
@@ -15,7 +15,7 @@ $(error No container runtime found. Install docker or podman — building on the
 endif
 
 WORK           := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-IMAGE          := osci-deshittifier-builder:1
+IMAGE          := rosci-builder:1
 HOST_UID       := $(shell id -u)
 HOST_GID       := $(shell id -g)
 
@@ -163,7 +163,7 @@ fuzz: image ## 60s libFuzzer smoke on the bridge-response parser (pinned nightly
 	  cd fuzz && set -o pipefail && cargo fuzz run bridge_response_parse -- -max_total_time=60 2>&1 | tail -12'
 
 .PHONY: release
-release: image ## Produce dist/: osci binary, osci-bridge.jar, SHA256SUMS
+release: image ## Produce dist/: rosci binary, osci-bridge.jar, SHA256SUMS
 	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml package
 	$(IN_CONTAINER) cargo build --workspace --release
 	$(IN_CONTAINER) bash -c '\

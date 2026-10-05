@@ -13,7 +13,7 @@ cd "$OUT"
 
 gen() { # gen <name>
   openssl req -x509 -newkey rsa:2048 -keyout "$1.key" -out "$1.pem" \
-    -days 2 -nodes -subj "/CN=$1/O=osci-deshittifier-test/C=DE" \
+    -days 2 -nodes -subj "/CN=$1/O=rosci-test/C=DE" \
     -addext "keyUsage = digitalSignature, keyEncipherment, dataEncipherment" \
    
 }

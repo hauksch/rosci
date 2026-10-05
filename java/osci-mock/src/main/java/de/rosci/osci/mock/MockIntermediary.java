@@ -1,4 +1,4 @@
-package de.deshittifier.osci.mock;
+package de.rosci.osci.mock;
 
 import java.io.IOException;
 import java.io.OutputStream;

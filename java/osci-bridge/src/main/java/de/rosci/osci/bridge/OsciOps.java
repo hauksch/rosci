@@ -1,4 +1,4 @@
-package de.deshittifier.osci.bridge;
+package de.rosci.osci.bridge;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -54,8 +54,8 @@ import de.osci.osci12.roles.Addressee;
 import de.osci.osci12.roles.Intermed;
 import de.osci.osci12.roles.Originator;
 import de.osci.osci12.roles.Reader;
-import de.deshittifier.osci.bridge.CryptoMaterial.P12Decrypter;
-import de.deshittifier.osci.bridge.CryptoMaterial.P12Signer;
+import de.rosci.osci.bridge.CryptoMaterial.P12Decrypter;
+import de.rosci.osci.bridge.CryptoMaterial.P12Signer;
 
 /**
  * The three OSCI flows this bridge exposes: send (StoreDelivery), fetch

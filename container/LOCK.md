@@ -1,6 +1,6 @@
 # Build environment lock
 
-Recorded: 2026-09-30 (via `make lock-info`); amended 2026-10-04 (supply-chain
+Recorded: 2026-09-30 (via `make lock-info`); amended 2026-10-05 (rosci rename: image tag + ID, base derivation fixed in record-lock.sh; supply-chain
 hardening: digest-pinned base image, checksummed rustup-init, pinned fuzz
 toolchain, OSV gate for the Java tree).
 
@@ -20,10 +20,10 @@ toolchain, OSV gate for the Java tree).
 | libxml2-utils | 2.9.13 (distro package, `xmllint` — schema-validates captured OSCI traffic against schema/, added 2026-10-04) |
 | Linker      | gcc (Ubuntu jammy, distro package)                                           |
 
-Builder image (locally built, tag `osci-deshittifier-builder:1`):
+Builder image (locally built, tag `rosci-builder:1`):
 
 ```
-localhost/osci-deshittifier-builder@sha256:6fd4c4726c427f5d2c2d9bbc12a79bfd56dadb643cc0b36613cf9ab50c32e069
+image ID sha256:6258d0e78faf859a6e41d406adb3483745066deaaee670b479b44910465cfde7 (locally built images carry no repo digest; re-record via `make lock-info`)
 ```
 
 (Recorded 2026-10-04 via `make lock-info` after the supply-chain hardening

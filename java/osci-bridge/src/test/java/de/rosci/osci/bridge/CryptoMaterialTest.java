@@ -1,4 +1,4 @@
-package de.deshittifier.osci.bridge;
+package de.rosci.osci.bridge;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,8 +27,8 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import de.deshittifier.osci.bridge.CryptoMaterial.P12Decrypter;
-import de.deshittifier.osci.bridge.CryptoMaterial.P12Signer;
+import de.rosci.osci.bridge.CryptoMaterial.P12Decrypter;
+import de.rosci.osci.bridge.CryptoMaterial.P12Signer;
 import de.osci.osci12.common.DialogHandler;
 
 /**
@@ -50,7 +50,7 @@ class CryptoMaterialTest
   @Test
   void parsesCertificateFromPemAndBareBase64() throws Exception
   {
-    X509Certificate cert = certificateFor(rsaKeyPair(), "CN=osci-deshittifier-test");
+    X509Certificate cert = certificateFor(rsaKeyPair(), "CN=rosci-test");
     byte[] der = cert.getEncoded();
     String bare = Base64.getEncoder().encodeToString(der);
     String pem = "-----BEGIN CERTIFICATE-----\n" + bare + "\n-----END CERTIFICATE-----\n";
