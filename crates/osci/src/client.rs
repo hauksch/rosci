@@ -27,7 +27,7 @@ impl std::fmt::Debug for OsciClient {
         // the identity-free facts and call it a day.
         f.debug_struct("OsciClient")
             .field("intermediary_url", &self.intermediary.url)
-            .field("tls", &self.tls)
+            .field("tls_configured", &self.tls.client_p12_b64.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -126,9 +126,9 @@ impl OsciClient {
 
     /// Tells the bridge to exit and waits for it.
     pub fn shutdown(&mut self) -> Result<(), Error> {
-        self.bridge.shutdown();
-        self.bridge.wait()?;
-        Ok(())
+        // Bounded politeness-then-hammer, mirroring Drop: an explicit
+        // shutdown must never hang where a drop would not.
+        self.bridge.shutdown_and_wait().map(|_| ())
     }
 
     fn dialog_request(&self, op: &'static str) -> Request {

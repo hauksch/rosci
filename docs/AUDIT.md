@@ -52,7 +52,7 @@ Test inventory:
 | suite | what it proves |
 |---|---|
 | `osci-bridge` JUnit (28) | JSON contract, PKI parsing, sign/verify + decrypt round-trips, request loop, feedback-row mapping (incl. 3800-warning tolerance), selection-mode mapping, byte-exact fetch content, streamed request transport |
-| `osci` unit/integration (50) | protocol serde, bridge lifecycle (timeout/garbage/death/desync), client flows incl. protocol-version handshake, DVDV resolution, XTA sniffing, TLS client bundle wiring |
+| `osci` unit/integration (53, incl. 3 proptest invariants) | protocol serde, bridge lifecycle (timeout/garbage/death/desync), client flows incl. protocol-version handshake, DVDV resolution, XTA sniffing, TLS client bundle wiring |
 | `osci-cli` (29) | argument plumbing, output shape, exit codes, jar resolution, loopback guard, fetch write safety |
 | e2e (7) | the real binary + real jar + mock intermediary: plain-transport send/status/fetch; **transport-encrypted send + status with ciphertext assertions**; failure exit codes; large payload; tampered supplier signature; attachments; **schema validation of captured wire traffic** |
 | interop (11, opt-in, live) | the real binary + real jar + the OSCI-Manager test intermediary: send/fetch round trips (incl. attachments and MessageMetaData), EFFI chunked transfer byte-exact, postbox isolation, `--all` warning semantics |

@@ -143,3 +143,270 @@ and PROTOCOL everywhere; test count claims verified exact at review time.
 Transport crypto in the mock is sound (fresh IV, AEAD, RSA-OAEP); no XXE
 in the bridge's main path, no traversal, no redirect following, no weak
 RNG.
+
+
+## G — full file-by-file review (2026-10-05, third pass)
+
+**Method.** All 139 tracked files reviewed after ~9,100 changed lines
+since F (0.3.1). Five independent fresh-eyes reviewers, one per cluster
+(Rust library, Rust CLI+tests, Java bridge, mock+harness, docs+configs),
+each with the changed-since-F list and the known-open findings (F15–F29,
+AUDIT limitations, STANDARD-COMPLIANCE §7) so nothing was blindly
+re-filed. Every P1/P2 was then independently verified against the code
+by the lead before entering the ledger below; the full file-by-file
+ledger follows the findings tables — every file accounted for, clean or
+otherwise.
+
+**Result: 1 × P1, 8 × P2, 41 × P3. 42 fixed with tests/verification, 8
+left open (all P3, listed).** Cross-mirror checks re-run after F's
+verdict: `PROTOCOL.md` ↔ `protocol.rs` ↔ `Protocol.java` remain 1:1
+including the new `attachments`/`chunk_size_kb`/`metadata_*` fields;
+exit-code tables consistent; README flags match the CLI (synopsis drift
+fixed as G27); test-count claims now match reality everywhere (G8, G47).
+
+### G findings — P1/P2 (all fixed)
+
+| # | Where | Issue | Sev | Decision |
+|---|---|---|---|---|
+| G1 | `java/…/OsciOps.java` — chunked send | The reassembled StoreDelivery's verdict arrives as **inside feedback** on the last chunk's response — a separate field from the per-chunk header feedback, which *was* classified. A rejected reassembly therefore returned `ok:true` with the rejection folded into `result.feedback`; the plain send path fails loudly on the identical verdict. Unreachable-by-test today (mock has no chunk handling), so live-verified reasoning: per EFFI the complete-message verdict lives only in the inside feedback. | P1 | **fixed** — inside feedback now runs through `checkFeedbackRows` before mapping; classification matrix pinned in `OsciOpsTest` |
+| G2 | `java/…/OsciOps.java` — `send()` | No `finally { exitDialogQuietly(dialog); }` — unlike fetch/process-card. Every send (success or failure, including chunk 3 of 5 dying) abandoned an open dialog (ConversationId, SequenceNumber) at the intermediary for the lifetime of the sidecar. | P2 | **fixed** — `finally` added; the orphaned-partial-chunks residue at the manager (timeout-purged) is now documented in the method. Verification bonus: the newly surfaced ExitDialog requests exposed the mock's schema-non-conform ConversationId (see finding 7 in STANDARD-COMPLIANCE §7), also fixed |
+| G3 | `java/…/OsciOps.java` — `fetch()` encrypted branch | `signatures_valid` was computed only for plain containers. Since the default is sign+encrypt, essentially every real fetch printed „signatures valid: unknown" — the check was simply never performed on the common path (adjacent to, but distinct from, F18's third-state question). | P2 | **fixed** — `signaturesValidQuietly(inner)` after decrypt |
+| G4 | `container/osv-java.sh` — attribution loop | Per-artifact re-query swallowed curl failures (`|| true` → empty → `continue`): any mid-loop network error converted a flagged artifact into "clean". A security gate that fails open. | P2 | **fixed** — query failures are recorded as `(query-failed)` unresolved results and fail the gate |
+| G5 | `java/…/mock/MockIntermediary.java` — inner dump | `request-N.inner.xml` was decoded UTF-8 then written ISO-8859-1: non-ASCII envelope content became mojibake with a declaration still claiming utf-8 (spurious xmllint failures; silent loss above U+00FF). Latent — e2e fixtures are ASCII. | P2 | **fixed** — byte-exact `dumpBytes` for the inner envelope; Latin-1 roundtrip kept only for raw transport dumps where it is a bijection |
+| G6 | `crates/osci` — `Identity`/`Tls`/`IdentityMsg`/`TlsMsg` + `OsciClient` Debug | zeroize 1.9.0's derived `Debug` **prints the inner value**, so the derived impls put every PIN on the log under `{:?}` — an unscrubbed copy that outlives zeroization, contradicting config.rs's own claim. Latent (nothing logs these types today). | P2 | **fixed** — hand-written redacting Debug impls (lengths, `<redacted>`); `OsciClient` Debug now reports `tls_configured` instead of the struct |
+| G7 | `crates/osci` — `OsciClient::shutdown` | `shutdown()` → `bridge.wait()` blocks **unboundedly** if the JVM acks shutdown but never exits; Drop's grace-then-kill never runs because the client is stuck before drop. The explicit path was less defensive than drop. | P2 | **fixed** — `BridgeHandle::shutdown_and_wait()` mirrors Drop's grace/kill/reap; `shutdown()` uses it |
+| G8 | `docs/AUDIT.md` — test inventory | Row claimed `osci` unit/integration (50); actual is 53 (28 lib + 25 integration incl. 3 proptests). Table contradicted README's 117 total. | P2 | **fixed** — (53, incl. 3 proptest) |
+| G9 | `docs/STANDARD-COMPLIANCE.md` — §3.4 vs §7/§8 | Internal contradiction: §3.4 called the schema-conformance harness „planned … Not built yet" while §7 item 6 and the CHANGELOG describe it as built. Pre-harness draft residue. | P2 | **fixed** — §3.4/§8 now past tense; §7 obligation 2 marked closed |
+
+### G findings — P3 (filed; trivial ones fixed in the same pass)
+
+| # | Where | Issue | Decision |
+|---|---|---|---|
+| G10 | `OsciOps.java` chunk math + CLI | `chunk_size_kb` 0 silently disabled chunking; ≥ 2^21 overflowed the int multiply into a crash | **fixed** (CLI range 1..=2_097_151 + long arithmetic in Java) |
+| G11 | `OsciOps.java` — totalKb | floor-truncated KB announced to the intermediary (0 for a 500-byte message) | **fixed** (ceiling) |
+| G12 | `OsciOps.java` — attachments loop | `[null]` / missing `data` dereferenced unguarded → INTERNAL instead of a named PROTOCOL error | **fixed** (`require`) |
+| G13 | `OsciOps.java` — MsgSize | counted only the main payload, not attachments | **fixed** (sum) |
+| G14 | `OsciOps.java` — main content | `content.content_type` silently ignored (only attachments honored it) | **fixed** |
+| G15 | `Bridge.java` — missing-op error | dropped the correlation id | **fixed** |
+| G16 | `OsciOps.java` — chunked send | mid-sequence failure leaves orphaned partial chunks at the manager until timeout — now documented in the method | **fixed (doc)** |
+| G17 | `OsciOps.java` — chunked fetch | intermediary-controlled `totalChunkNumbers` drives an unbounded loop; no assembled-size cap | left open |
+| G18 | `BridgeTransport.java` | HTTP error statuses surface as transport IOExceptions; fault body never read | left open |
+| G19 | `bridge.rs` — `call()` | after a timeout the late response stays queued; every later call fails with misleading id-mismatch errors | left open (related F22) |
+| G20 | `bridge.rs` — reader thread | `lines()` has no length cap; a runaway bridge grows memory unboundedly | left open (related F23) |
+| G21 | `bridge.rs` — `spawn` | reader-thread spawn failure orphaned the JVM (no kill/reap on that path) | **fixed** |
+| G22 | `OsciClientBuilder::build` | no URL-scheme check (unlike the DVDV path) — `file://` surfaces JVM-side | **fixed** |
+| G23 | `Identity::from_p12_files` | decrypter p12/pin accepted in any combination; mismatch fails far away JVM-side | **fixed** (both-or-neither) |
+| G24 | `xta.rs` — root warning | prefixed roots (`<xta:XTA>`) always triggered the "not XTA" warning | **fixed** (prefix stripped) |
+| G25 | `main.rs` — fetch | `--all` + `--message-id` silently ignored `--all` | **fixed** (`conflicts_with`) |
+| G26 | `main.rs` — send/fetch | `--chunk-size-kb 0` silently disabled chunking | **fixed** (value range) |
+| G27 | `README.md` — synopsis | missing `--tls-client-pin`/`--insecure-transport`; status/fetch lines omitted required connection flags | **fixed** |
+| G28 | `interop.rs` — `gate()` | fixture checksum verification ran after the network preflight (tampering undetected when offline) | **fixed** (verify first) |
+| G29 | `e2e.rs` — metadata assertion | asserted only the generic header name, not the author identifier | **fixed** |
+| G30 | `xsd-validate.sh` — Auftrag scan | `PartialStoreDelivery` contains `StoreDelivery`; unordered token scan could pick the wrong schema | **fixed** (anchored match) |
+| G31 | `interop.rs` — `fetch --all` leg | depends on alice's shared public postbox staying empty | left open (documented) |
+| G32 | `conn_tls` | zero test coverage for the new TLS flag logic | **fixed** (4 unit tests) |
+| G33 | `cli.rs` — help test | name promised exit codes, body asserted `--to` | **fixed** (root help asserted) |
+| G34 | `Makefile` — fuzz | `| tail -12` masked the fuzzer's exit status | **fixed** (pipefail) |
+| G35 | `Makefile` — clean | missed `fuzz/artifacts` (crash artifacts survived) | **fixed** |
+| G36 | `xsd-validate.sh` — response path | unanchored `request-` substitution broke in dirs containing "request-" | **fixed** (anchored) |
+| G37 | `xsd-validate.sh` — empty dir | 0 validated / 0 skipped exited 0 | **fixed** (dir check + empty guard) |
+| G38 | `MockIntermediary.java` — error path | double `sendResponseHeaders` on post-header failures; exchange lingers | left open (local-only) |
+| G39 | `tests/gen-pki.sh` | stale comment, swallowed openssl errors, loose umask | **fixed** |
+| G40 | `.github/dependabot.yml` | fuzz crate uncovered | **fixed** |
+| G41 | `.github/workflows/ci.yml` | no `permissions:` block, no concurrency cancel | **fixed** |
+| G42 | `container/record-lock.sh` | base image hardcoded instead of derived from the Dockerfile | **fixed** |
+| G43 | `container/Dockerfile.builder` | cargo registry dead weight in the image; single layer for two tools | left open |
+| G44 | `Makefile` — bind mount | no SELinux `:Z` label (Fedora/RHEL podman trap), undocumented | left open (documented in ledger) |
+| G45 | `CHANGELOG.md` — 0.4.0 | internally inconsistent artifact counts (77 vs 80; manifest now 90) | **fixed** (count qualified) |
+| G46 | `README.md` — audit line | under-described `make audit` (OSV scan invisible) | **fixed** |
+| G47 | `docs/STANDARD-COMPLIANCE.md` | interop suite „9 tests" → 11 | **fixed** |
+| G48 | `docs/AUDIT.md` — coverage | JaCoCo 0.8.13 → 0.8.15 | **fixed** |
+| G49 | `docs/AUDIT.md` — limitation 3 | conflated `--dvdv-file` (send) and `--file` (dvdv find) | **fixed** |
+| G50 | `docs/STANDARD-COMPLIANCE.md` — §3.4 | interop test count and harness status drift (with G9) | **fixed** |
+
+### Rejected findings (reported by reviewers, not reproducible / duplicates)
+
+- „fetch subject never populated" (Java bridge) — this is known-open **F19**, not a new finding; remains open.
+- „chunk overflow" reported independently by two reviewers — merged into G10.
+- „Empty DER file returns Ok("")" — accepted behavior; fails JVM-side with a clean error, not worth code (recorded in non-findings).
+
+
+
+**Rust library — `crates/osci/`**
+
+| File | Δ since F | Verdict | Findings |
+|---|---|---|---|
+| `crates/osci/Cargo.toml` | — | clean | — |
+| `crates/osci/src/bridge.rs` | yes | findings | G6 G19 G20 G21 |
+| `crates/osci/src/client.rs` | yes | findings | G6 G7 |
+| `crates/osci/src/config.rs` | yes | findings | G6 G23 |
+| `crates/osci/src/dvdv.rs` | — | clean | — |
+| `crates/osci/src/error.rs` | — | clean | — |
+| `crates/osci/src/lib.rs` | yes | clean | — |
+| `crates/osci/src/protocol.rs` | yes | findings | G6 |
+| `crates/osci/src/xta.rs` | — | findings | G24 |
+| `crates/osci/tests/bridge_lifecycle.rs` | yes | clean | — |
+| `crates/osci/tests/client_flows.rs` | — | clean | — |
+| `crates/osci/tests/proptests.proptest-regressions` | — | clean | — |
+| `crates/osci/tests/proptests.rs` | — | clean | — |
+
+**Rust CLI — `crates/osci-cli/`**
+
+| File | Δ since F | Verdict | Findings |
+|---|---|---|---|
+| `crates/osci-cli/Cargo.toml` | yes | clean | — |
+| `crates/osci-cli/src/main.rs` | yes | findings | G25 G26 G32 |
+| `crates/osci-cli/tests/cli.rs` | — | findings | G33 |
+| `crates/osci-cli/tests/e2e.rs` | yes | findings | G29 |
+| `crates/osci-cli/tests/fixtures/interop/SHA256SUMS` | new | clean | — |
+| `crates/osci-cli/tests/fixtures/interop/alice_signature_4096.p12` | new | clean | — |
+| `crates/osci-cli/tests/fixtures/interop/bob_cipher_4096.p12` | new | clean | — |
+| `crates/osci-cli/tests/fixtures/interop/bob_cipher_4096.pem` | new | clean | — |
+| `crates/osci-cli/tests/fixtures/interop/bob_signature_4096.p12` | new | clean | — |
+| `crates/osci-cli/tests/fixtures/interop/carol_cipher_4096.p12` | new | clean | — |
+| `crates/osci-cli/tests/fixtures/interop/osci_manager_cipher_4096.pem` | new | clean | — |
+| `crates/osci-cli/tests/interop.rs` | new | findings | G31 |
+
+**Java bridge — `java/osci-bridge/`**
+
+| File | Δ since F | Verdict | Findings |
+|---|---|---|---|
+| `java/osci-bridge/DEPENDENCY_MANIFEST.sha256` | yes | clean | — |
+| `java/osci-bridge/pom.xml` | yes | clean | — |
+| `java/osci-bridge/src/main/java/de/deshittifier/osci/bridge/Bridge.java` | — | findings | G15 |
+| `java/osci-bridge/src/main/java/de/deshittifier/osci/bridge/BridgeException.java` | — | clean | — |
+| `java/osci-bridge/src/main/java/de/deshittifier/osci/bridge/BridgeTransport.java` | — | findings | G18 |
+| `java/osci-bridge/src/main/java/de/deshittifier/osci/bridge/CryptoMaterial.java` | — | clean | — |
+| `java/osci-bridge/src/main/java/de/deshittifier/osci/bridge/OsciOps.java` | yes | findings | G1 G2 G10 G12 G13 G14 G16 |
+| `java/osci-bridge/src/main/java/de/deshittifier/osci/bridge/Protocol.java` | yes | clean | — |
+| `java/osci-bridge/src/test/java/de/deshittifier/osci/bridge/BridgeLoopTest.java` | — | clean | — |
+| `java/osci-bridge/src/test/java/de/deshittifier/osci/bridge/BridgeTransportTest.java` | — | clean | — |
+| `java/osci-bridge/src/test/java/de/deshittifier/osci/bridge/CryptoMaterialTest.java` | — | clean | — |
+| `java/osci-bridge/src/test/java/de/deshittifier/osci/bridge/OsciOpsTest.java` | yes | clean | — |
+| `java/osci-bridge/src/test/java/de/deshittifier/osci/bridge/ProtocolTest.java` | — | clean | — |
+
+**Java mock — `java/osci-mock/`**
+
+| File | Δ since F | Verdict | Findings |
+|---|---|---|---|
+| `java/osci-mock/pom.xml` | yes | clean | — |
+| `java/osci-mock/src/main/java/de/deshittifier/osci/mock/MockIntermediary.java` | — | findings | G5 |
+| `java/osci-mock/src/main/java/de/deshittifier/osci/mock/ResponseSigner.java` | — | clean | — |
+| `java/osci-mock/src/main/java/de/deshittifier/osci/mock/TransportCrypto.java` | — | clean | — |
+
+**Schemas — `schema/` (vendored; provenance + conformance sampling, not line-read)**
+
+| File | Δ since F | Verdict | Findings |
+|---|---|---|---|
+| `schema/AcceptDelivery.xsd` | new | clean | — |
+| `schema/ChunkInfo.xsd` | new | clean | — |
+| `schema/EFFI.xsd` | new | clean | — |
+| `schema/ExitDialog.xsd` | new | clean | — |
+| `schema/FetchDelivery.xsd` | new | clean | — |
+| `schema/FetchProcessCard.xsd` | new | clean | — |
+| `schema/ForwardDelivery.xsd` | new | clean | — |
+| `schema/GetMessageId.xsd` | new | clean | — |
+| `schema/InitDialog.xsd` | new | clean | — |
+| `schema/MediateDelivery.xsd` | new | clean | — |
+| `schema/PROVENANCE.md` | new | clean | — |
+| `schema/PartialFetchDelivery.xsd` | new | clean | — |
+| `schema/PartialFetchDeliveryOldNS.xsd` | new | clean | — |
+| `schema/PartialStoreDelivery.xsd` | new | clean | — |
+| `schema/PartialStoreDeliveryOldNS.xsd` | new | clean | — |
+| `schema/ProcessDelivery.xsd` | new | clean | — |
+| `schema/ResponseToAcceptDelivery.xsd` | new | clean | — |
+| `schema/ResponseToExitDialog.xsd` | new | clean | — |
+| `schema/ResponseToFetchDelivery.xsd` | new | clean | — |
+| `schema/ResponseToFetchProcessCard.xsd` | new | clean | — |
+| `schema/ResponseToForwardDelivery.xsd` | new | clean | — |
+| `schema/ResponseToGetMessageId.xsd` | new | clean | — |
+| `schema/ResponseToInitDialog.xsd` | new | clean | — |
+| `schema/ResponseToMediateDelivery.xsd` | new | clean | — |
+| `schema/ResponseToPartialFetchDelivery.xsd` | new | clean | — |
+| `schema/ResponseToPartialFetchDeliveryOldNS.xsd` | new | clean | — |
+| `schema/ResponseToPartialStoreDelivery.xsd` | new | clean | — |
+| `schema/ResponseToPartialStoreDeliveryOldNS.xsd` | new | clean | — |
+| `schema/ResponseToProcessDelivery.xsd` | new | clean | — |
+| `schema/ResponseToStoreDelivery.xsd` | new | clean | — |
+| `schema/StoreDelivery.xsd` | new | clean | — |
+| `schema/catalog.xml` | new | clean | — |
+| `schema/extern/XMLSchema.dtd` | new | clean | — |
+| `schema/extern/datatypes.dtd` | new | clean | — |
+| `schema/extern/soap-envelope.xsd` | new | clean | — |
+| `schema/extern/xenc-schema-11.xsd` | new | clean | — |
+| `schema/extern/xenc-schema.xsd` | new | clean | — |
+| `schema/extern/xml.xsd` | new | clean | — |
+| `schema/extern/xmldsig-core-schema.xsd` | new | clean | — |
+| `schema/order.xsd` | new | clean | — |
+| `schema/order_zusatz.xsd` | new | clean | — |
+| `schema/oscienc.xsd` | new | clean | — |
+| `schema/oscisig.xsd` | new | clean | — |
+| `schema/soapAcceptDelivery.xsd` | new | clean | — |
+| `schema/soapExitDialog.xsd` | new | clean | — |
+| `schema/soapFetchDelivery.xsd` | new | clean | — |
+| `schema/soapFetchProcessCard.xsd` | new | clean | — |
+| `schema/soapForwardDelivery.xsd` | new | clean | — |
+| `schema/soapGetMessageId.xsd` | new | clean | — |
+| `schema/soapInitDialog.xsd` | new | clean | — |
+| `schema/soapMediateDelivery.xsd` | new | clean | — |
+| `schema/soapMessageEncrypted.xsd` | new | clean | — |
+| `schema/soapMessageFault.xsd` | new | clean | — |
+| `schema/soapPartialFetchDelivery.xsd` | new | clean | — |
+| `schema/soapPartialStoreDelivery.xsd` | new | clean | — |
+| `schema/soapProcessDelivery.xsd` | new | clean | — |
+| `schema/soapResponseToAcceptDelivery.xsd` | new | clean | — |
+| `schema/soapResponseToExitDialog.xsd` | new | clean | — |
+| `schema/soapResponseToFetchDelivery.xsd` | new | clean | — |
+| `schema/soapResponseToFetchProcessCard.xsd` | new | clean | — |
+| `schema/soapResponseToForwardDelivery.xsd` | new | clean | — |
+| `schema/soapResponseToGetMessageId.xsd` | new | clean | — |
+| `schema/soapResponseToInitDialog.xsd` | new | clean | — |
+| `schema/soapResponseToMediateDelivery.xsd` | new | clean | — |
+| `schema/soapResponseToPartialFetchDelivery.xsd` | new | clean | — |
+| `schema/soapResponseToPartialStoreDelivery.xsd` | new | clean | — |
+| `schema/soapResponseToProcessDelivery.xsd` | new | clean | — |
+| `schema/soapResponseToStoreDelivery.xsd` | new | clean | — |
+| `schema/soapStoreDelivery.xsd` | new | clean | — |
+
+**Harness — `container/`, `tests/`, `fuzz/`, `.github/`**
+
+| File | Δ since F | Verdict | Findings |
+|---|---|---|---|
+| `.github/dependabot.yml` | new | findings | G40 |
+| `.github/workflows/ci.yml` | new | findings | G41 |
+| `container/Dockerfile.builder` | yes | findings | G43 |
+| `container/LOCK.md` | yes | clean | — |
+| `container/jacoco-summary.sh` | — | clean | — |
+| `container/osv-java.sh` | new | findings | G4 |
+| `container/record-lock.sh` | yes | findings | G42 |
+| `container/xsd-validate.sh` | new | findings | G30 G36 G37 |
+| `fuzz/Cargo.lock` | yes | clean | — |
+| `fuzz/Cargo.toml` | — | clean | — |
+| `fuzz/fuzz_targets/bridge_response_parse.rs` | — | clean | — |
+| `tests/gen-pki.sh` | — | findings | G39 |
+
+**Docs — `docs/`**
+
+| File | Δ since F | Verdict | Findings |
+|---|---|---|---|
+| `docs/AUDIT.md` | yes | findings | G8 G47 G48 G49 |
+| `docs/PROTOCOL.md` | yes | clean | — |
+| `docs/REVIEW.md` | yes | clean | — |
+| `docs/STANDARD-COMPLIANCE.md` | new | findings | G9 G47 |
+| `docs/TEST-INFRASTRUCTURE.md` | yes | clean | — |
+
+**Root configs**
+
+| File | Δ since F | Verdict | Findings |
+|---|---|---|---|
+| `.editorconfig` | — | clean | — |
+| `.gitattributes` | — | clean | — |
+| `.gitignore` | yes | clean | — |
+| `CHANGELOG.md` | yes | findings | G45 |
+| `Cargo.lock` | yes | clean | — |
+| `Cargo.toml` | yes | clean | — |
+| `LICENSE` | — | clean | — |
+| `Makefile` | yes | findings | G34 G35 |
+| `README.md` | yes | findings | G27 G46 |
+| `deny.toml` | — | clean | — |
+| `rust-toolchain.toml` | new | clean | — |

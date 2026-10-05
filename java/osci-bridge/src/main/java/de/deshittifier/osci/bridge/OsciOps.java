@@ -138,7 +138,12 @@ public final class OsciOps
         messageIdUri.setValue(mid.getMessageId());
         identification.setMessageID(messageIdUri);
         mmd.setMsgIdentification(identification);
-        mmd.setMsgSize(java.math.BigInteger.valueOf(xta.length));
+        long totalBytes = xta.length;
+        if (req.attachments != null)
+          for (Protocol.Payload att : req.attachments)
+            if (att != null && att.data != null)
+              totalBytes += att.data.length() / 4 * 3; // base64 → bytes, floor
+        mmd.setMsgSize(java.math.BigInteger.valueOf(totalBytes));
         delivery.addCustomHeaderExtention(new MessageMetaDataCustomHeader(mmd));
       }
 
@@ -155,6 +160,8 @@ public final class OsciOps
         ? new Attachment(new ByteArrayInputStream(xta), filename,
                          Constants.SYMMETRIC_CIPHER_ALGORITHM_AES256_GCM)
         : new Attachment(new ByteArrayInputStream(xta), filename);
+      if (req.content.content_type != null && !req.content.content_type.isBlank())
+        attachment.setContentType(req.content.content_type);
       coco.addContent(new Content(attachment));
 
       // Optional additional attachments: same container, same cipher
@@ -165,6 +172,8 @@ public final class OsciOps
         int n = 1;
         for (Protocol.Payload att : req.attachments)
         {
+          require(att != null && att.data != null,
+                  "attachments[" + (n - 1) + "] needs data (base64)");
           String refId = att.filename != null && !att.filename.isBlank()
             ? att.filename : "attachment-" + n;
           byte[] attBytes = Base64.getDecoder().decode(att.data);
@@ -207,15 +216,15 @@ public final class OsciOps
         ByteArrayOutputStream assembled = new ByteArrayOutputStream();
         delivery.writeMessage(assembled);
         byte[] full = assembled.toByteArray();
-        int chunkBytes = req.chunk_size_kb.intValue() * 1024;
-        int totalChunks = (int) Math.max(1L, (full.length + (long) chunkBytes - 1) / chunkBytes);
-        long totalKb = full.length / 1024;
+        long chunkBytes = req.chunk_size_kb * 1024L;
+        int totalChunks = (int) Math.max(1L, (full.length + chunkBytes - 1) / chunkBytes);
+        long totalKb = (full.length + 1023) / 1024;
 
         ResponseToPartialStoreDelivery last = null;
         for (int i = 1; i <= totalChunks; i++)
         {
-          int from = (i - 1) * chunkBytes;
-          int len = (int) Math.min((long) chunkBytes, full.length - (long) from);
+          int from = (int) ((i - 1) * chunkBytes);
+          int len = (int) Math.min(chunkBytes, full.length - (long) from);
           ChunkInformation info = new ChunkInformation(req.chunk_size_kb, i, totalKb, totalChunks);
           PartialStoreDelivery partial =
             new PartialStoreDelivery(dialog, to, info, mid.getMessageId());
@@ -224,9 +233,13 @@ public final class OsciOps
           checkFeedback(last);
         }
 
-        // The reassembled StoreDelivery's own feedback is what the user
-        // cares about; the chunk acks before it are bookkeeping.
+        // The reassembled StoreDelivery's own verdict arrives as INSIDE
+        // feedback on the last chunk's response — a distinct field from the
+        // per-chunk header feedback already classified above. It decides
+        // the request: a rejected reassembly must fail loudly, not ride
+        // along as ok:true feedback.
         String[][] inside = last.getInsideFeedback();
+        checkFeedbackRows(inside != null ? inside : last.getFeedback());
         result.feedback = toProtocolFeedback(inside != null ? inside : last.getFeedback());
         result.message_id = mid.getMessageId();
         result.response_signed = last.isSigned();
@@ -249,6 +262,16 @@ public final class OsciOps
     {
       throw new BridgeException(BridgeException.OSCI,
                                   e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+    }
+    finally
+    {
+      // Same contract as fetch/process-card: a failed send (chunk 3 of 5,
+      // a rejected reassembly) must not abandon an open dialog at the
+      // intermediary while this bridge process lives on. A mid-chunk-
+      // sequence failure leaves orphaned partial chunks at the manager
+      // until its partial-timeout purges them — unavoidable with this API
+      // surface, but the dialog at least is ours to close.
+      exitDialogQuietly(dialog);
     }
   }
 
@@ -365,6 +388,11 @@ public final class OsciOps
           try
           {
             ContentContainer inner = ed.decrypt(new Reader(decrypter));
+            // Same contract as the plain branch: the decrypted container
+            // carries the author's signatures, so "did they verify?" is
+            // answerable exactly here — not "unknown" on the default
+            // sign+encrypt path.
+            m.signatures_valid = signaturesValidQuietly(inner);
             for (Content c : inner.getContents())
               m.encrypted_contents.add(toFetchedContent(c, "encrypted"));
           }

@@ -68,11 +68,20 @@ echo "osv-java: advisory hits in the Java tree — attributing per artifact:" >&
 # re-query each artifact individually (rare path) to name the culprit.
 unresolved=""
 allowlisted_count=0
+query_failures=0
 for c in "${coords[@]}"; do
     ga=${c% *}; ver=${c#* }
-    single=$(curl -fsSL -H 'Content-Type: application/json' \
+    # Fail CLOSED: a query that cannot complete (rate limit, transient
+    # network) is an unresolved gate result, never a silent "clean".
+    if ! single=$(curl -fsSL -H 'Content-Type: application/json' \
         -d "{\"package\":{\"name\":\"$ga\",\"ecosystem\":\"Maven\"},\"version\":\"$ver\"}" \
-        https://api.osv.dev/v1/query || true)
+        https://api.osv.dev/v1/query)
+    then
+        printf '  query-failed %-46s %s\n' "$ga" "$ver" >&2
+        unresolved="$unresolved $ga@$ver(query-failed)"
+        query_failures=$((query_failures + 1))
+        continue
+    fi
     ids=$(printf '%s' "$single" | grep -o '"id":"[^"]*"' | sort -u || true)
     if [ -z "$ids" ]; then continue; fi
     if printf '%s\n' "$allowlist" | grep -qx "$ga@$ver"; then
@@ -85,7 +94,7 @@ for c in "${coords[@]}"; do
 done
 
 if [ -n "$unresolved" ]; then
-    echo "osv-java: non-allowlisted vulnerabilities:$(printf ' %s' $unresolved)" >&2
+    echo "osv-java: non-allowlisted vulnerabilities or failed queries:$(printf ' %s' $unresolved)" >&2
     echo "osv-java: investigate at https://osv.dev, then bump the pin and re-run make manifest" >&2
     exit 1
 fi

@@ -44,12 +44,28 @@ impl Intermediary {
 /// PINs are held in `Zeroizing` so every copy this crate makes is scrubbed
 /// on drop. What stays unscrubbable, honestly: the serialized JSON request
 /// line on the pipe and the JVM-side strings past it (docs/AUDIT.md).
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Identity {
     signer_p12_b64: String,
     signer_pin: Zeroizing<String>,
     decrypter_p12_b64: Option<String>,
     decrypter_pin: Option<Zeroizing<String>>,
+}
+
+impl std::fmt::Debug for Identity {
+    // zeroize's derived Debug prints the inner value, so the derived impl
+    // would put every PIN on the log — hand-rolled redaction instead.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Identity")
+            .field("signer_p12_b64_len", &self.signer_p12_b64.len())
+            .field("signer_pin", &"<redacted>")
+            .field(
+                "decrypter_p12",
+                &self.decrypter_p12_b64.as_ref().map(|p| p.len()),
+            )
+            .field("decrypter_pin", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Identity {
@@ -89,7 +105,7 @@ impl Identity {
 }
 
 /// TLS knobs passed straight through to the bridge transport.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Tls {
     /// Additional trust anchors (PEM / base64 DER). Empty = system store.
     pub trust_anchors: Vec<String>,
@@ -101,6 +117,21 @@ pub struct Tls {
     pub connect_timeout_ms: Option<u64>,
     /// Socket read timeout in milliseconds.
     pub read_timeout_ms: Option<u64>,
+}
+
+impl std::fmt::Debug for Tls {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tls")
+            .field("trust_anchors", &self.trust_anchors.len())
+            .field(
+                "client_p12_b64",
+                &self.client_p12_b64.as_ref().map(|p| p.len()),
+            )
+            .field("client_pin", &"<redacted>")
+            .field("connect_timeout_ms", &self.connect_timeout_ms)
+            .field("read_timeout_ms", &self.read_timeout_ms)
+            .finish()
+    }
 }
 
 impl Tls {

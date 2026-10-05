@@ -238,8 +238,36 @@ impl BridgeHandle {
     }
 
     /// Blocks until the process exits; returns its exit code if any.
+    /// Unbounded by design — use [`shutdown_and_wait`] for the bounded
+    /// shutdown path.
     pub fn wait(&mut self) -> Result<Option<i32>, Error> {
         self.child.wait().map(|s| s.code()).map_err(Error::Io)
+    }
+
+    /// Sends the shutdown request and waits a bounded grace period for the
+    /// JVM to exit — the same politeness-then-hammer contract as `Drop`,
+    /// so an explicit shutdown can never hang where a drop would not.
+    pub fn shutdown_and_wait(&mut self) -> Result<Option<i32>, Error> {
+        self.shutdown();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while self.child.try_wait().map(|s| s.is_none()).unwrap_or(true) {
+            if std::time::Instant::now() > deadline {
+                warn!("bridge ignored shutdown; killing it");
+                let _ = self.child.kill();
+                let reap_deadline = std::time::Instant::now() + Duration::from_secs(2);
+                while self.child.try_wait().map(|s| s.is_none()).unwrap_or(true) {
+                    if std::time::Instant::now() > reap_deadline {
+                        return Err(Error::BridgeProtocol(
+                            "bridge ignored shutdown and kill; leaving it to init".into(),
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                return Ok(None);
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        self.wait()
     }
 }
 

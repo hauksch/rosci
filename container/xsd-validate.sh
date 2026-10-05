@@ -18,6 +18,7 @@
 set -u
 
 dir="${1:?usage: xsd-validate.sh <dumpdir>}"
+[[ -d "$dir" ]] || { echo "xsd-validate: dump dir not found: $dir" >&2; exit 2; }
 schema_root="$(cd "$(dirname "$0")/../schema" && pwd)"
 export XML_CATALOG_FILES="$schema_root/catalog.xml"
 
@@ -92,12 +93,17 @@ for body in "$dir"/request-*.xml; do
   validate "$target" "$order"
 
   meta="${body%.xml}.meta"
-  response="${body/request-/response-}"
+  f="${body##*/}"
+  response="${body%/*}/response-${f#request-}"
   if [[ -f "$response" ]]; then
     # Intermediary-produced: counted, not validated (see header comment).
     skipped=$((skipped + 1))
   fi
 done
 
+if (( validated == 0 && skipped == 0 )); then
+  echo "xsd-validate: nothing validated and nothing skipped - broken run?" >&2
+  exit 2
+fi
 echo "xsd-validate: $validated valid, $skipped skipped, fail=$fail"
 exit $fail

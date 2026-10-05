@@ -144,7 +144,11 @@ public final class MockIntermediary
         if (crypto == null)
           throw new IOException("request is transport-encrypted but the mock was started without --key");
         byte[] inner = crypto.decryptRequest(body);
-        dump("request-" + n + ".inner.xml", new String(inner, StandardCharsets.UTF_8));
+        // Byte-exact: the decrypted envelope is UTF-8, and dump() re-encodes
+        // through Latin-1 — correct for the raw transport dumps (byte
+        // bijection) but lossy/mojibake for this inner document, whose XML
+        // declaration still says utf-8. Write the raw bytes.
+        dumpBytes("request-" + n + ".inner.xml", inner);
         writeMeta(n, true);
         String innerXml = new String(inner, StandardCharsets.UTF_8);
         rememberClientCert(innerXml);
@@ -224,6 +228,13 @@ public final class MockIntermediary
     }
   }
 
+  private static void dumpBytes(String name, byte[] content) throws IOException
+  {
+    if (dumpDir == null)
+      return;
+    Files.write(dumpDir.resolve(name), content);
+  }
+
   private static void dump(String name, String content)
   {
     if (dumpDir == null)
@@ -253,7 +264,11 @@ public final class MockIntermediary
     // absence (InitDialog sends none; inventing one fails check[3]==0).
     String seqAttr = attr(request, "SequenceNumber", null);
     String echoedChallenge = element(request, "Challenge");
-    String conversationId = attr(request, "ConversationId", "mock-conversation");
+    // InitDialog requests carry no ConversationId, so the response assigns
+    // one — digits only, because the schema's ControlBlock pattern is \d+
+    // and every later request (orders AND ExitDialog) echoes it back.
+    String conversationId = attr(request, "ConversationId",
+                                 String.valueOf(System.currentTimeMillis()));
 
     // Response layouts are NOT uniform: some response elements live in the
     // SOAP body, others in the SOAP header. We follow each builder's

@@ -60,9 +60,9 @@ written as the work happened and are kept as history.
   verifies the installed cargo-fuzz version, and `make audit` now scans the
   fuzz tree's
   own lockfile too (it was workspace-excluded and invisible to cargo-deny).
-  New `container/osv-java.sh` (wired into `make audit`): all 77 Maven
-  artifacts from DEPENDENCY_MANIFEST.sha256 are checked against the OSV
-  database — the checksum manifest proves integrity, the OSV gate proves
+  New `container/osv-java.sh` (wired into `make audit`): every Maven
+  artifact in DEPENDENCY_MANIFEST.sha256 is checked against the OSV
+  database (count grows with the tree) — the checksum manifest proves integrity, the OSV gate proves
   "and no advisory is published against it". The gate's first run caught
   nine advisory-flagged versions (commons-io, commons-lang3,
   plexus-utils ×5, iq80 snappy — all build-plugin transitives, none shipped

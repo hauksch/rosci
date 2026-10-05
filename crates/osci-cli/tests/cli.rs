@@ -63,13 +63,16 @@ fn help_works() {
 }
 
 #[test]
-fn subcommand_help_lists_exit_codes() {
-    rosci()
-        .arg("send")
+fn root_help_lists_exit_codes() {
+    // Exit codes live in the root command's ABOUT text, not in
+    // subcommand help — assert the thing the name promises.
+    let output = Command::new(env!("CARGO_BIN_EXE_rosci"))
         .arg("--help")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("--to"));
+        .output()
+        .expect("run rosci --help");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Exit codes"), "stdout: {stdout}");
 }
 
 #[test]

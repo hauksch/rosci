@@ -58,11 +58,12 @@ all ten.
    our traffic is the strongest practical check.
 3. **Feature completeness** — the matrices below: every order type and
    mechanism, who owns it (library / bridge / CLI), status, evidence.
-4. **Schema conformance (planned).** The mock intermediary dumps
-   decrypted OSCI messages; a harness validating those dumps with
-   `xmllint --schema` against the `osci-schema` XSDs (catalog.xml
-   resolves the W3C externals) would close §7 obligation (2) with a
-   test. Not built yet.
+4. **Schema conformance — built.** The mock intermediary dumps
+   decrypted OSCI messages; `container/xsd-validate.sh` validates them
+   with `xmllint --schema` against the vendored `schema/` XSDs
+   (catalog.xml resolves the W3C externals), and the e2e test
+   `wire_traffic_is_schema_valid` closes §7 obligation (2): every
+   rosci-produced request envelope, plain and encrypted transport.
 5. **Feedback-code conformance.** Classification tests pin the §5
    behavior (0xxx success, 3800 warning tolerated, 9xxx/3707 fail);
    deviations documented in §5 below.
@@ -143,14 +144,15 @@ a gap; revisit if a use case demands it.
    request envelope (both transports) against the normative soap\*
    schemas. Response envelopes are intermediary-produced and counted
    but not validated — which surfaced finding 7.
-7. **The mock's rich responses are not schema-conform** (found by the
-   harness): non-numeric ConversationId (`mock-conversation` — the
-   schema demands `\d+`), missing soap:actor/mustUnderstand attributes
-   on ControlBlock, IntermediaryCertificates misplaced relative to
-   SupplierSignature, and character content inside the (empty-by-schema)
-   SOAP Body. Harmless for client tests (the library parses it fine),
-   but the mock models a non-conformant intermediary; hardening it is
-   mock-side follow-up work, not a rosci defect.
+7. **Mock schema conformance** (found by the harness): the mock's
+   non-numeric ConversationId (`mock-conversation`) — echoed by the
+   library into every subsequent request — **is fixed** (numeric,
+   timestamp-based), so captured requests including ExitDialog now
+   validate. Still open on the mock's *rich responses*: missing
+   soap:actor/mustUnderstand attributes on ControlBlock,
+   IntermediaryCertificates placement, and character content in the
+   SOAP Body. Harmless for client tests (the library parses it fine);
+   hardening those is mock-side follow-up work, not a rosci defect.
 
 Fixed during this comparison: the bridge accepted `BY_RECENT_MODIFICATION`
 as a selection mode but the library's `setSelectionMode` rejects that
@@ -167,5 +169,6 @@ unknown modes fail cleanly (see `OsciOpsTest.selectionModeMapping`).
 - After bumping `de.osci:osci-bibliothek`: re-run both, re-hash the
   reproducible jar, and re-check this matrix's „library" rows against
   the new version's changelog.
-- When the XSD harness lands (§3.4): one e2e exchange asserted
-  schema-valid per §7 obligation (2).
+- §7 obligation (2) is closed: the e2e test
+  `wire_traffic_is_schema_valid` asserts every captured rosci request
+  envelope schema-valid (§3.4).

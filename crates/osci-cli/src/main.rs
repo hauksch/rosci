@@ -53,7 +53,7 @@ enum Cmd {
 }
 
 /// Arguments every bridged operation shares.
-#[derive(Args)]
+#[derive(Args, Default)]
 struct ConnArgs {
     /// Intermediary entry URL (overrides DVDV resolution).
     #[arg(long, env = "OSCI_INTERMEDIARY")]
@@ -145,7 +145,7 @@ struct SendArgs {
 
     /// Send via EFFI chunked transfer with this many KB per chunk (for
     /// intermediaries with size limits / large payloads).
-    #[arg(long, value_name = "KB")]
+    #[arg(long, value_name = "KB", value_parser = clap::value_parser!(u64).range(1..=2_097_151))]
     chunk_size_kb: Option<u64>,
 
     /// XTA MessageMetaData author identifier (Ergänzung; e.g.
@@ -178,11 +178,11 @@ struct FetchArgs {
 
     /// Pull the message in EFFI chunks of this many KB (for messages that
     /// were stored chunked).
-    #[arg(long, value_name = "KB")]
+    #[arg(long, value_name = "KB", value_parser = clap::value_parser!(u64).range(1..=2_097_151))]
     chunk_size_kb: Option<u64>,
 
-    /// Fetch everything waiting.
-    #[arg(long)]
+    /// Fetch everything waiting. Mutually exclusive with --message-id.
+    #[arg(long, conflicts_with = "message_id")]
     all: bool,
 
     #[command(flatten)]
@@ -226,8 +226,9 @@ enum DvdvCmd {
         #[arg(long)]
         category: Option<String>,
 
-        /// List all entries instead of searching.
-        #[arg(long)]
+        /// List all entries instead of searching. Mutually exclusive
+        /// with --org.
+        #[arg(long, conflicts_with = "org")]
         all: bool,
 
         /// DVDV extract file.
@@ -877,6 +878,62 @@ mod proptests {
             prop_assert!(once.chars().all(|c|
                 c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')));
         }
+    }
+}
+
+#[cfg(test)]
+mod conn_tls_tests {
+    use super::*;
+
+    #[test]
+    fn conn_tls_is_none_when_nothing_is_configured() {
+        assert!(conn_tls(&ConnArgs::default()).unwrap().is_none());
+    }
+
+    #[test]
+    fn conn_tls_fails_on_missing_trust_anchor_file() {
+        let conn = ConnArgs {
+            tls_ca: Some(std::path::PathBuf::from("/gibt-es-nicht/ca.pem")),
+            ..ConnArgs::default()
+        };
+        assert!(conn_tls(&conn).is_err());
+    }
+
+    #[test]
+    fn conn_tls_carries_client_bundle_when_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let p12 = dir.path().join("client.p12");
+        std::fs::write(&p12, [1u8, 2, 3]).unwrap();
+        let conn = ConnArgs {
+            tls_client_cert: Some(p12),
+            tls_client_pin: Some("pin".into()),
+            ..ConnArgs::default()
+        };
+        let tls = conn_tls(&conn).unwrap().expect("tls configured");
+        assert!(tls.client_p12_b64.is_some());
+        assert!(tls.client_pin.is_some());
+        assert!(tls.trust_anchors.is_empty());
+    }
+
+    #[test]
+    fn conn_tls_combines_anchor_and_client_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let ca = dir.path().join("ca.pem");
+        std::fs::write(
+            &ca,
+            "-----BEGIN CERTIFICATE-----\nZm9v\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        let p12 = dir.path().join("client.p12");
+        std::fs::write(&p12, [9u8]).unwrap();
+        let conn = ConnArgs {
+            tls_ca: Some(ca),
+            tls_client_cert: Some(p12),
+            ..ConnArgs::default()
+        };
+        let tls = conn_tls(&conn).unwrap().expect("tls configured");
+        assert_eq!(tls.trust_anchors.len(), 1);
+        assert!(tls.client_p12_b64.is_some());
     }
 }
 

@@ -160,7 +160,7 @@ fuzz: image ## 60s libFuzzer smoke on the bridge-response parser (pinned nightly
 	  env CARGO_HOME=/opt/cargo rustup toolchain install nightly-$(NIGHTLY_DATE) --profile minimal >/dev/null || exit 1; \
 	  export RUSTUP_TOOLCHAIN=nightly-$(NIGHTLY_DATE); \
 	  cargo-fuzz --version 2>/dev/null | grep -q "$(CARGO_FUZZ_VERSION)" || cargo install cargo-fuzz --locked --version $(CARGO_FUZZ_VERSION) >/dev/null || exit 1; \
-	  cd fuzz && cargo fuzz run bridge_response_parse -- -max_total_time=60 2>&1 | tail -12'
+	  cd fuzz && set -o pipefail && cargo fuzz run bridge_response_parse -- -max_total_time=60 2>&1 | tail -12'
 
 .PHONY: release
 release: image ## Produce dist/: osci binary, osci-bridge.jar, SHA256SUMS
@@ -206,7 +206,7 @@ clean: ## Remove all build outputs, caches and tool downloads (keeps the builder
 	       java/osci-bridge/dependency-reduced-pom.xml \
 	       java/osci-mock/dependency-reduced-pom.xml \
 	       .deps .m2-repo .cargo-home .rustup \
-	       fuzz/target fuzz/corpus fuzz/coverage \
+	       fuzz/target fuzz/corpus fuzz/coverage fuzz/artifacts \
 	       './$$TMPDIR'
 	@# .cache can hold root-owned podman-root-trash from --remote runs
 	@# (containers deleting bind-mount files as container-root). Not

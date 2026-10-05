@@ -17,7 +17,7 @@ fn is_none<T>(opt: &Option<T>) -> bool {
 }
 
 /// One request to the bridge. Exactly one non-`None` op per line.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Request {
     pub id: String,
     pub op: &'static str,
@@ -77,7 +77,7 @@ pub struct Party {
 /// Sender identity as PKCS#12 material (base64) plus PINs. The PINs ride
 /// in `Zeroizing` — the buffer this serializes into is plain by wire
 /// necessity, but every stored copy scrubs itself on drop.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct IdentityMsg {
     #[serde(default, skip_serializing_if = "is_none")]
     pub signer_p12: Option<String>,
@@ -101,7 +101,7 @@ pub struct Payload {
 }
 
 /// TLS knobs for the bridge's HTTP(S) transport.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct TlsMsg {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trust_anchors: Option<Vec<String>>,
@@ -232,6 +232,33 @@ pub struct Inspection {
 
 /// Version handshake data from `ping`.
 pub type VersionInfo = std::collections::BTreeMap<String, String>;
+
+impl std::fmt::Debug for IdentityMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // zeroize's derived Debug prints the inner value; redact by hand.
+        f.debug_struct("IdentityMsg")
+            .field("signer_p12", &self.signer_p12.as_ref().map(|p| p.len()))
+            .field("signer_pin", &"<redacted>")
+            .field(
+                "decrypter_p12",
+                &self.decrypter_p12.as_ref().map(|p| p.len()),
+            )
+            .field("decrypter_pin", &"<redacted>")
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for TlsMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TlsMsg")
+            .field("trust_anchors", &self.trust_anchors.as_ref().map(Vec::len))
+            .field("client_p12", &self.client_p12.as_ref().map(|p| p.len()))
+            .field("client_pin", &"<redacted>")
+            .field("connect_timeout_ms", &self.connect_timeout_ms)
+            .field("read_timeout_ms", &self.read_timeout_ms)
+            .finish()
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -681,6 +681,10 @@ fn send_with_attachments() {
         store_envelope.contains("MessageMetaData"),
         "XTA MessageMetaData header must ride along"
     );
+    assert!(
+        store_envelope.contains("ags:NNNNNNNNNNN"),
+        "the author identifier must ride along inside the header"
+    );
     // The old single-content bug this pins shut: an attachment must not
     // silently vanish between CLI and wire.
     assert!(

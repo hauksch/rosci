@@ -45,7 +45,7 @@ make build     # Java bridge + mock jars, Rust workspace
 make test      # all 117 tests, incl. e2e against the local mock intermediary
 make check     # lint + test + audit + verify-deps in one command (CI runs it too)
 make lint      # rustfmt + clippy -D warnings + mvn verify
-make audit     # cargo-deny: licenses, advisories, crate sources
+make audit     # cargo-deny + OSV scan of the Java dependency tree
 make release   # dist/bin/rosci + dist/lib/osci-bridge.jar + SHA256SUMS
 ```
 
@@ -61,9 +61,15 @@ rosci send [-|<file.xta>] --to <cert:<path>|dvdv:<org-key>[:<category>]>
           [--attachment FILE] [--chunk-size-kb KB]
           [--metadata-author ID] [--metadata-reader ID]
           [--no-sign] [--no-encrypt] [--tls-ca FILE]
-          [--tls-client-cert FILE] [--json]
-rosci fetch [--message-id ID | --all] [--chunk-size-kb KB] [--out DIR] [--json]
-rosci status <message-id> [--json]
+          [--tls-client-cert FILE [--tls-client-pin PIN]] [--json]
+
+Test-mode escape hatch (local mock intermediaries only; refuses
+non-loopback hosts unless --insecure-transport-any-host is also given):
+`--insecure-transport` disables SOAP-transport encryption/signatures —
+content-level signing/encryption stay on.
+rosci fetch [--message-id ID | --all] [--chunk-size-kb KB]
+           [--out DIR] [--json]          # + connection flags below
+rosci status <message-id> [--json]       # + connection flags below
 rosci dvdv find --org KEY [--category CAT | --all] [--file dvdv.json] [--json]
 rosci version [--require-bridge]
 ```
