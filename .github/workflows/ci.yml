@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The build caches everything inside the workspace (ground rule 1) —
       # cache those directories so CI does not re-download the Maven tree
