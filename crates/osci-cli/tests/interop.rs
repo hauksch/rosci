@@ -70,7 +70,11 @@ fn verify_fixtures() {
             .expect("SHA256SUMS line shape");
         let name = name.trim_start();
         let bytes = fs::read(fixture(name)).expect("read interop fixture");
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        // sha2 0.11 returns a generic Array — hex it byte-wise.
+        let digest: String = Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         assert_eq!(
             digest, expected,
             "interop fixture {name} does not match SHA256SUMS — re-pin after checking docs/TEST-INFRASTRUCTURE.md"
