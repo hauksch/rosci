@@ -20,10 +20,11 @@ Include what you can of: affected command and flags, a reproduction
 
 ## Scope
 
-**In scope:** the `rosci` CLI (`crates/osci-cli`) and the Java bridge
-(`java/osci-bridge`) — how they parse bridge responses and fetched
-messages, how they handle keys/PINs, what they put on the wire, and the
-local files they read and write.
+**In scope:** the `rosci` CLI (`crates/osci-cli`), the `roscid` REST
+server (`crates/roscid`), and the Java bridge (`java/osci-bridge`) —
+how they parse bridge responses and fetched messages, how they handle
+keys/PINs and API keys, what they put on the wire, what they expose
+over HTTP, and the local files they read and write.
 
 **Out of scope:**
 - The wrapped [`de.osci` library](https://gitlab.opencode.de/governikus/osci/osci-bib-java)

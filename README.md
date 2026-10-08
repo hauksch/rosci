@@ -194,6 +194,16 @@ against it (order-type matrix, security mechanisms, deviations):
 5. Comments may grumble about bureaucracy. Gently. It's not the Beamte's
    fault — they also just wanted to go home at 16:29.
 
+## REST server
+
+`roscid` is a second binary in this workspace: a REST server over the
+same library and bridge JVM, for applications that prefer HTTP over a
+CLI. Loopback-bound by default (non-loopback binds require an API key),
+endpoints mirror the CLI 1:1 (`/v1/send`, `/v1/fetch`, `/v1/messages/
+{id}/status`, `/v1/version`). Contract and runbook:
+[docs/REST-API.md](docs/REST-API.md), machine-readable:
+[docs/openapi.yaml](docs/openapi.yaml).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) — the short version: build in

@@ -1,0 +1,233 @@
+openapi: 3.0.3
+info:
+  title: roscid — REST over OSCI 1.2
+  description: |
+    REST surface of the roscid server. Every operation maps 1:1 to the
+    CLI's capabilities; the OSCI-Transport 1.2 wire protocol is unchanged
+    (docs/REST-API.md is the normative contract).
+  version: 0.4.0
+servers:
+  - url: http://127.0.0.1:8080
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      summary: Liveness (no auth)
+      responses:
+        "200":
+          description: process alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /readyz:
+    get:
+      summary: Readiness (pings the bridge; requires auth)
+      responses:
+        "200":
+          description: bridge answers
+        "503":
+          description: bridge not answering; error envelope in body
+  /v1/version:
+    get:
+      summary: Version handshake (bridge, JVM, OSCI library, protocol)
+      responses:
+        "200":
+          description: map of component → version
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+  /v1/send:
+    post:
+      summary: Send an XTA payload (with optional attachments, chunking)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendRequest"
+      responses:
+        "200":
+          description: receipt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Receipt"
+        "400":
+          description: config/parse error
+        "422":
+          description: intermediary rejected the request
+        "502":
+          description: transport or bridge failure
+  /v1/fetch:
+    post:
+      summary: Fetch messages from the postbox
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message_id:
+                  type: string
+                all:
+                  type: boolean
+              oneOf:
+                - required: [message_id]
+                - required: [all]
+      responses:
+        "200":
+          description: array of fetched messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FetchedMessage"
+        "404":
+          description: dvdv miss (org addressing)
+        "422":
+          description: intermediary rejection
+  /v1/messages/{id}/status:
+    get:
+      summary: Process card (Laufzettel) for a message id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: process cards
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProcessCard"
+        "422":
+          description: intermediary rejection
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    ContentPart:
+      type: object
+      required: [data]
+      properties:
+        filename:
+          type: string
+        content_type:
+          type: string
+        data:
+          type: string
+          description: standard base64, opaque bytes
+    ToSpec:
+      type: object
+      description: exactly one of cert / org
+      properties:
+        cert:
+          type: string
+          description: recipient cipher certificate, PEM or base64 DER
+        org:
+          type: string
+          description: DVDV org key (501 today)
+        category:
+          type: string
+    SendRequest:
+      type: object
+      required: [to, content]
+      properties:
+        to:
+          $ref: "#/components/schemas/ToSpec"
+        subject:
+          type: string
+        content:
+          $ref: "#/components/schemas/ContentPart"
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContentPart"
+        chunk_size_kb:
+          type: integer
+          description: EFFI chunked transfer, KB per chunk
+        sign:
+          type: boolean
+          default: true
+        encrypt:
+          type: boolean
+          default: true
+    Receipt:
+      type: object
+      properties:
+        message_id:
+          type: string
+        response_signed:
+          type: boolean
+        feedback:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+    FetchedMessage:
+      type: object
+      properties:
+        subject:
+          type: string
+          nullable: true
+        signatures_valid:
+          type: boolean
+          nullable: true
+        contents:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/FetchedContent"
+        encrypted_contents:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/FetchedContent"
+    FetchedContent:
+      type: object
+      properties:
+        filename:
+          type: string
+          nullable: true
+        content_type:
+          type: string
+        data:
+          type: string
+          description: standard base64, byte-exact with what was sent
+        container:
+          type: string
+    ProcessCard:
+      type: object
+      properties:
+        message_id:
+          type: string
+        subject:
+          type: string
+        creation:
+          type: string
+        forwarding:
+          type: string
+        reception:
+          type: string
+        inspections:
+          type: array
+          items:
+            type: object
