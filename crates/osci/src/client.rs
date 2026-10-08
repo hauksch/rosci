@@ -204,6 +204,34 @@ impl OsciClientBuilder {
         Ok(self)
     }
 
+    /// Identity with a separate decrypter bundle — required when fetched
+    /// content was encrypted to a cipher certificate that differs from the
+    /// signing certificate.
+    pub fn signer_and_decrypter_p12_files(
+        mut self,
+        signer: impl AsRef<Path>,
+        signer_pin: &str,
+        decrypter: impl AsRef<Path>,
+        decrypter_pin: &str,
+    ) -> Result<Self, Error> {
+        self.identity = Some(Identity::from_p12_files(
+            signer.as_ref(),
+            signer_pin,
+            Some(decrypter.as_ref()),
+            Some(decrypter_pin),
+        )?);
+        Ok(self)
+    }
+
+    /// Bounds how long a single bridge operation may take before the call
+    /// fails with a timeout. Services should set this explicitly: a wedged
+    /// JVM must surface as HTTP 504, not as a connection held open for the
+    /// default five minutes.
+    pub fn response_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.bridge = self.bridge.response_timeout(timeout);
+        self
+    }
+
     pub fn tls(mut self, tls: Tls) -> Self {
         self.tls = tls;
         self
@@ -455,6 +483,46 @@ fn base_request(op: &'static str) -> Request {
     }
 }
 
+/// Whether an intermediary URL points at the local machine — the same
+/// machine this process runs on. Used to enforce fail-closed guards for
+/// operations that are only safe against loopback peers (plain-transport
+/// test mode; a REST server's exposure checks).
+///
+/// Recognizes: `localhost`, `::1`, bracketed IPv6 loopback, and
+/// `127.0.0.0/8`. Strips userinfo first (`http://127.0.0.1:8080@evil.example`
+/// must read as evil.example), then IPv6 brackets, then the port.
+/// Everything ambiguous fails closed.
+pub fn url_host_is_loopback(url: &str) -> bool {
+    let after_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
+    let mut host_port = after_scheme.split(['/']).next().unwrap_or(after_scheme);
+    // Userinfo (RFC 3986) precedes the host and may itself contain ':' and
+    // dots — strip it before host parsing, or "127.0.0.1:8080@evil.example"
+    // passes as loopback while the bridge connects to evil.example.
+    if let Some((_, rest)) = host_port.rsplit_once('@') {
+        host_port = rest;
+    }
+    // IPv6 forms come bracketed; the port (if any) follows the bracket.
+    let host = if let Some(rest) = host_port.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest)
+    } else {
+        host_port
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(host_port)
+    };
+    if host.eq_ignore_ascii_case("localhost") || host.eq_ignore_ascii_case("::1") {
+        return true;
+    }
+    // 127.0.0.0/8: four numeric labels, first one 127 — and nothing bolted
+    // on afterwards ("127.0.0.1.evil.example" need not apply).
+    let labels: Vec<&str> = host.split('.').collect();
+    labels.len() == 4
+        && labels[0] == "127"
+        && labels[1..]
+            .iter()
+            .all(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// Where the jar lives by default: `OSCI_BRIDGE_JAR` wins, then the
 /// release layout next to the running binary (`../lib/osci-bridge.jar`,
 /// see `make release`), then a cwd-relative `osci-bridge.jar`.
@@ -512,5 +580,50 @@ mod tests {
     fn falls_back_to_cwd_relative_when_layout_is_absent() {
         let p = resolve_jar_path(None, Some(Path::new("/nowhere/bin/rosci")));
         assert_eq!(p, Path::new("osci-bridge.jar"));
+    }
+}
+
+#[cfg(test)]
+mod loopback_tests {
+    use super::url_host_is_loopback;
+
+    #[test]
+    fn loopback_urls_are_recognized_in_all_their_forms() {
+        for url in [
+            "http://127.0.0.1:39471/entry",
+            "http://localhost:8080/x",
+            "http://localhost/x",
+            "https://127.42.0.1:1/",
+            "http://[::1]:9000/entry",
+            "http://[::1]/",
+            // Userinfo in front of a genuinely loopback host: the userinfo
+            // is decoration, the host is what the bridge connects to.
+            "http://user:geheim@127.0.0.1:8080/x",
+            "http://dienstlich@[::1]:9000/entry",
+        ] {
+            assert!(url_host_is_loopback(url), "{url} should be loopback");
+        }
+    }
+
+    #[test]
+    fn everything_else_is_not_loopback() {
+        for url in [
+            "http://gov.test.osci.de/osci-manager-entry/externalentry",
+            "https://intermediary.example/entry",
+            "http://10.0.0.1:1/",             // private, but not loopback
+            "http://192.168.1.10/entry",      // same
+            "http://127.0.0.1.evil.example/", // loopback as a subdomain — nice try
+            // Loopback as *userinfo*: the Rust guard used to read the
+            // userinfo as the host while the Java bridge connected to
+            // evil.example. The guard must read the same host Java does.
+            "http://127.0.0.1:8080@evil.example/entry",
+            "http://[::1]@evil.example/entry",
+            "http://user:geheim@10.1.2.3/x",
+        ] {
+            assert!(
+                !url_host_is_loopback(url),
+                "{url} must not pass as loopback"
+            );
+        }
     }
 }
