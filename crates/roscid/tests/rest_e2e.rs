@@ -138,6 +138,20 @@ fn setup() -> Option<Smoke> {
         .spawn()
         .expect("spawn roscid");
 
+    // Wait for roscid to bind — spawning and listening are not the same
+    // event, and the test's first request races the bind otherwise.
+    let rosci_addr = format!("127.0.0.1:{rosci_port}");
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if TcpStream::connect(&rosci_addr).is_ok() {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("roscid never came up on {rosci_addr}");
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
     let base_url = format!("http://127.0.0.1:{rosci_port}");
     Some(Smoke {
         base: base_url,
