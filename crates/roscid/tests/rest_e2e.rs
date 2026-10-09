@@ -33,14 +33,36 @@ impl Drop for Mock {
     }
 }
 
+struct Roscid {
+    child: Child,
+}
+
+impl Drop for Roscid {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .map(|l| l.local_addr().map(|a| a.port()).unwrap_or(0))
         .unwrap_or(0)
 }
 
-/// Spawns mock intermediary + roscid. Returns (base_url, workdir, mock).
-fn setup() -> Option<(String, PathBuf, Mock)> {
+struct Smoke {
+    base: String,
+    dir: PathBuf,
+    _pki: tempfile::TempDir,
+    _mock: Mock,
+    _roscid: Roscid,
+}
+
+/// Spawns the mock intermediary and roscid against it. Everything it
+/// creates stays alive until the returned Smoke is dropped — the PKI
+/// TempDir guard especially must not be dropped inside setup, or the
+/// certs vanish before the tests read them.
+fn setup() -> Option<Smoke> {
     let bridge_jar = repo_root().join("java/osci-bridge/target/osci-bridge.jar");
     let mock_jar = repo_root().join("java/osci-mock/target/osci-mock.jar");
     if !bridge_jar.is_file() || !mock_jar.is_file() || which_java().is_none() {
@@ -48,30 +70,31 @@ fn setup() -> Option<(String, PathBuf, Mock)> {
         return None;
     }
 
-    let pki_dir = tempfile::tempdir().expect("pki tempdir");
+    let pki_guard = tempfile::tempdir().expect("pki tempdir");
+    let pki = pki_guard.path().to_path_buf();
     let status = Command::new(repo_root().join("tests/gen-pki.sh"))
-        .arg(pki_dir.path())
+        .arg(&pki)
         .status()
         .expect("run gen-pki.sh");
     assert!(status.success(), "PKI generation failed");
 
-    let dump_dir = pki_dir.path().join("dump");
+    let dump_dir = pki.join("dump");
     std::fs::create_dir_all(&dump_dir).unwrap();
     let mock_port = free_port();
-    let mock_log = std::fs::File::create(pki_dir.path().join("mock.log")).unwrap();
+    let mock_log = std::fs::File::create(pki.join("mock.log")).unwrap();
     #[allow(clippy::zombie_processes)] // Mock::drop kills + reaps
-    let _mock = Mock {
+    let mock = Mock {
         child: Command::new(which_java().unwrap())
             .arg("-jar")
             .arg(&mock_jar)
             .arg(mock_port.to_string())
             .arg(&dump_dir)
             .arg("--key")
-            .arg(pki_dir.path().join("intermed-cipher.key"))
+            .arg(pki.join("intermed-cipher.key"))
             .arg("--sign-key")
-            .arg(pki_dir.path().join("intermed-sign.key"))
+            .arg(pki.join("intermed-sign.key"))
             .arg("--sign-cert")
-            .arg(pki_dir.path().join("intermed-sign.pem"))
+            .arg(pki.join("intermed-sign.pem"))
             .stdout(Stdio::null())
             .stderr(Stdio::from(mock_log))
             .spawn()
@@ -93,21 +116,21 @@ fn setup() -> Option<(String, PathBuf, Mock)> {
 
     // roscid submits through the mock; recipient addressed by inline cert.
     let rosci_port = free_port();
-    let child = Command::new(env!("CARGO_BIN_EXE_roscid"))
+    let roscid_child = Command::new(env!("CARGO_BIN_EXE_roscid"))
         .env("OSCI_BRIDGE_JAR", &bridge_jar)
         .env("OSCI_CERT_PIN", DEMO_PIN)
         .arg("--bind")
         .arg(format!("127.0.0.1:{rosci_port}"))
         .arg("--cert")
-        .arg(pki_dir.path().join("client-sign.p12"))
+        .arg(pki.join("client-sign.p12"))
         .arg("--decrypter-cert")
-        .arg(pki_dir.path().join("client-cipher.p12"))
+        .arg(pki.join("client-cipher.p12"))
         .arg("--intermediary")
         .arg(format!(
             "http://127.0.0.1:{mock_port}/osci-manager-entry/externalentry"
         ))
         .arg("--intermediary-cert")
-        .arg(pki_dir.path().join("osci_manager_cipher.pem"))
+        .arg(pki.join("intermed-cipher.pem"))
         .arg("--response-timeout-secs")
         .arg("60")
         .stdout(Stdio::null())
@@ -116,7 +139,15 @@ fn setup() -> Option<(String, PathBuf, Mock)> {
         .expect("spawn roscid");
 
     let base_url = format!("http://127.0.0.1:{rosci_port}");
-    Some((base_url, pki_dir.path().to_path_buf(), Mock { child }))
+    Some(Smoke {
+        base: base_url,
+        dir: pki.clone(),
+        _pki: pki_guard,
+        _mock: mock,
+        _roscid: Roscid {
+            child: roscid_child,
+        },
+    })
 }
 
 /// Minimal HTTP/1.1 client over TcpStream: returns (status, body).
@@ -162,19 +193,16 @@ fn http(method: &str, url: &str, body: Option<&str>, key: Option<&str>) -> (u16,
 
 #[test]
 fn rest_server_healthz_and_liveness() {
-    let Some((base, _dir, _mock)) = setup() else {
-        return;
-    };
-    let (status, body) = http("GET", &format!("{base}/healthz"), None, None);
+    let Some(smoke) = setup() else { return };
+    let (status, body) = http("GET", &format!("{}/healthz", smoke.base), None, None);
     assert_eq!(status, 200);
     assert_eq!(body.trim(), r#"{"status":"ok"}"#);
 }
 
 #[test]
 fn rest_send_round_trip_with_attachments() {
-    let Some((base, dir, _mock)) = setup() else {
-        return;
-    };
+    let Some(smoke) = setup() else { return };
+    let dir = &smoke.dir;
 
     let payload = b"rest round trip payload 2026";
     let payload_b64 = {
@@ -185,8 +213,10 @@ fn rest_send_round_trip_with_attachments() {
         use base64::Engine as _;
         base64::engine::general_purpose::STANDARD.encode(b"attachment bytes 123")
     };
+    let recipient_pem =
+        std::fs::read_to_string(dir.join("recipient-cipher.pem")).expect("recipient pem");
     let send = serde_json::json!({
-        "to": {"cert": std::fs::read_to_string(dir.join("recipient-cipher.pem")).expect("recipient pem")},
+        "to": {"cert": recipient_pem},
         "subject": "rest e2e sendung",
         "content": {"filename": "meldung.xta", "data": payload_b64},
         "attachments": [{"filename": "anhang.txt", "data": att_b64}],
@@ -194,7 +224,7 @@ fn rest_send_round_trip_with_attachments() {
 
     let (status, response) = http(
         "POST",
-        &format!("{base}/v1/send"),
+        &format!("{}/v1/send", smoke.base),
         Some(&serde_json::to_string(&send).unwrap()),
         None,
     );
@@ -211,18 +241,14 @@ fn rest_send_round_trip_with_attachments() {
 
 #[test]
 fn rest_status_route_returns_process_card_shape() {
-    let Some((base, _dir, _mock)) = setup() else {
-        return;
-    };
-    // Status against the mock's canned message id — the mock hands out
-    // Laufzettel shape, even if thin.
+    let Some(smoke) = setup() else { return };
     let (status, body) = http(
         "GET",
-        &format!("{base}/v1/messages/mock-msgid-1/status"),
+        &format!("{}/v1/messages/mock-msgid-1/status", smoke.base),
         None,
         None,
     );
-    // The manager may or may not have a card for the id — assert the route
+    // The mock may or may not have a card for the id — assert the route
     // answered with a well-formed envelope either way.
     assert!(
         status == 200 || status == 404 || status == 422,
@@ -232,10 +258,9 @@ fn rest_status_route_returns_process_card_shape() {
 
 #[test]
 fn rest_rejects_without_api_key_when_configured() {
-    let Some((_base, dir, _mock)) = setup() else {
-        return;
-    };
-    // Restart roscid with an API key — the loopback bind may still carry
+    let Some(smoke) = setup() else { return };
+    let dir = &smoke.dir;
+    // A second roscid with an API key — the loopback bind may still carry
     // one, and the route must then enforce it.
     let mut child = Command::new(env!("CARGO_BIN_EXE_roscid"))
         .env(
@@ -252,7 +277,7 @@ fn rest_rejects_without_api_key_when_configured() {
         .arg("--intermediary")
         .arg("http://127.0.0.1:39471/osci-manager-entry/externalentry")
         .arg("--intermediary-cert")
-        .arg(dir.join("osci_manager_cipher.pem"))
+        .arg(dir.join("intermed-cipher.pem"))
         .arg("--api-key")
         .arg("sekrit")
         .arg("--response-timeout-secs")
