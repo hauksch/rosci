@@ -128,9 +128,6 @@ fn read_pin(args: &Args) -> Zeroizing<String> {
             .unwrap_or_else(|e| panic!("cannot read pin file {}: {e}", file.display()));
         return Zeroizing::new(content.trim().to_string());
     }
-    if let Some(pin) = &args.pin {
-        return Zeroizing::new(pin.clone());
-    }
     match std::env::var("OSCI_CERT_PIN") {
         Ok(pin) => Zeroizing::new(pin),
         Err(_) => Zeroizing::new(String::new()),
