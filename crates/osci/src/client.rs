@@ -50,8 +50,10 @@ impl OsciClient {
     /// Version handshake: bridge, JVM, OSCI library, BouncyCastle.
     pub fn versions(&mut self) -> Result<VersionInfo, Error> {
         let rsp = self.bridge.call(base_request("ping"))?;
-        let result = rsp.result.unwrap_or_default();
-        Ok(result.versions.unwrap_or_default())
+        let versions = rsp.result.and_then(|r| r.versions).ok_or_else(|| {
+            Error::BridgeProtocol("bridge ping response carried no versions".into())
+        })?;
+        Ok(versions)
     }
 
     /// Starts a send flow for an XTA payload.
@@ -103,8 +105,10 @@ impl OsciClient {
         req.selection_mode = Some(mode.to_string());
         req.selection_rule = rule;
         let rsp = self.bridge.call(req)?;
-        let result = rsp.result.unwrap_or_default();
-        Ok(result.messages.unwrap_or_default())
+        let messages = rsp.result.and_then(|r| r.messages).ok_or_else(|| {
+            Error::BridgeProtocol("bridge fetch response carried no messages".into())
+        })?;
+        Ok(messages)
     }
 
     /// Fetches the Laufzettel (process card) for a message we sent.
@@ -113,8 +117,10 @@ impl OsciClient {
         req.selection_mode = Some("BY_MESSAGE_ID".to_string());
         req.selection_rule = Some(message_id.to_string());
         let rsp = self.bridge.call(req)?;
-        let result = rsp.result.unwrap_or_default();
-        Ok(result.process_cards.unwrap_or_default())
+        let cards = rsp.result.and_then(|r| r.process_cards).ok_or_else(|| {
+            Error::BridgeProtocol("bridge process-card response carried no process cards".into())
+        })?;
+        Ok(cards)
     }
 
     /// End-of-life convenience: shuts the bridge down and swallows the

@@ -5,7 +5,6 @@
 //! handshake, send, fetch, process-card, DVDV resolution. Everything the
 //! real jar + mock intermediary do later, minus the JVM startup tax.
 
-use std::io::Write;
 use std::time::Duration;
 
 use osci::bridge::BridgeConfig;
@@ -32,14 +31,22 @@ while IFS= read -r line; do
 done
 "#;
 
-fn fake_bridge_config() -> BridgeConfig {
+fn scripted_bridge(script: &str) -> (BridgeConfig, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let script_path = dir.path().join("happy.sh");
-    std::fs::write(&script_path, HAPPY).unwrap();
+    let script_path = dir.path().join("bridge.sh");
+    std::fs::write(&script_path, script).unwrap();
+    let dir_path = dir.path().to_path_buf();
     // Leak the tempdir on purpose: the script must outlive this function.
     std::mem::forget(dir);
-    BridgeConfig::cmd(["bash", script_path.to_str().unwrap()])
-        .response_timeout(Duration::from_secs(5))
+    (
+        BridgeConfig::cmd(["bash", script_path.to_str().unwrap()])
+            .response_timeout(Duration::from_secs(5)),
+        dir_path,
+    )
+}
+
+fn fake_bridge_config() -> BridgeConfig {
+    scripted_bridge(HAPPY).0
 }
 
 fn test_client() -> OsciClient {
@@ -205,13 +212,71 @@ fn dvdv_resolution_provides_intermediary_and_recipient() {
 
 #[test]
 fn drop_shuts_the_fake_bridge_down() {
-    let mut client = test_client();
-    // No explicit shutdown: Drop must do it.
+    // The script announces its PID; Drop must leave that process dead —
+    // asserted, not assumed, because a leaked bridge is a finding even
+    // when every other assertion is green.
+    let pid_announcing = format!("echo $$ > \"$(dirname \"$0\")/bridge.pid\"\n{HAPPY}");
+    let (cfg, dir) = scripted_bridge(&pid_announcing);
+    let mut client = OsciClient::builder()
+        .bridge_config(cfg)
+        .intermediary(Intermediary::new("http://fake/entry", "FAKECERT"))
+        .identity(Identity::from_p12_files(dummy_p12().as_path(), "123456", None, None).unwrap())
+        .build()
+        .unwrap();
     let _ = client.versions();
+    let pid: u32 = std::fs::read_to_string(dir.join("bridge.pid"))
+        .expect("the fake bridge announced its pid")
+        .trim()
+        .parse()
+        .expect("pid is numeric");
     drop(client);
-    // If the fake bridge were still alive, the next lines in its script
-    // would be waiting for input forever; the process list stays clean.
-    std::io::stdout().flush().ok();
+    // Drop shuts down AND reaps before returning, so /proc must agree.
+    assert!(
+        !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        "bridge process {pid} survived Drop"
+    );
+}
+
+#[test]
+fn malformed_ok_responses_are_errors_not_empty_success() {
+    // The Java bridge always populates the op's result field on ok:true
+    // (Gson omits nulls, never presents empty fields), so an ok response
+    // without its payload is a protocol violation — not "no messages".
+    let script = r#"
+echo '{"ok":true,"result":{"versions":{"bridge":"fake-1.0","protocol":"1"}}}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"ping"'*)         echo '{"ok":true,"result":{}}' ;;
+    *'"fetch"'*)        echo '{"ok":true}' ;;
+    *'"process-card"'*) echo '{"ok":true,"result":{"feedback":[["x","0000"]]}}' ;;
+    *'"shutdown"'*)     echo '{"ok":true}'; exit 0 ;;
+    *) sleep 30 ;;
+  esac
+done
+"#;
+    let (cfg, _dir) = scripted_bridge(script);
+    let mut client = OsciClient::builder()
+        .bridge_config(cfg)
+        .intermediary(Intermediary::new("http://fake/entry", "FAKECERT"))
+        .identity(Identity::from_p12_files(dummy_p12().as_path(), "123456", None, None).unwrap())
+        .build()
+        .unwrap();
+
+    let err = client.versions().unwrap_err();
+    assert!(
+        matches!(&err, Error::BridgeProtocol(m) if m.contains("no versions")),
+        "got: {err:?}"
+    );
+    let err = client.fetch(FetchQuery::All).unwrap_err();
+    assert!(
+        matches!(&err, Error::BridgeProtocol(m) if m.contains("no messages")),
+        "got: {err:?}"
+    );
+    let err = client.process_card("fake-msg-17").unwrap_err();
+    assert!(
+        matches!(&err, Error::BridgeProtocol(m) if m.contains("no process cards")),
+        "got: {err:?}"
+    );
 }
 
 #[test]
@@ -261,7 +326,7 @@ fn dvdv_all_is_sorted_and_ambiguity_is_an_error() {
 }
 
 #[test]
-fn receipt_serializes_stable_json() {
+fn receipt_round_trips_through_json() {
     use osci::Receipt;
     let receipt = Receipt {
         message_id: "mock-4711".into(),
@@ -269,8 +334,6 @@ fn receipt_serializes_stable_json() {
         feedback: Some(vec![vec!["alles gut".into(), "0000".into()]]),
     };
     let json = serde_json::to_string(&receipt).unwrap();
-    assert!(json.contains("\"message_id\":\"mock-4711\""));
-    assert!(json.contains("0000"));
     let back: Receipt = serde_json::from_str(&json).unwrap();
-    assert_eq!(back.message_id, "mock-4711");
+    assert_eq!(back, receipt, "receipt must survive a JSON round trip");
 }
