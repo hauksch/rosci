@@ -165,7 +165,17 @@ fn handle(app: &App, mut request: tiny_http::Request) {
                         .map_err(|err| RequestError::from_library("GET /readyz", &err))
                 }) {
                     Ok(value) => Ok(value),
-                    Err(re) => Ok(json!({"status": "not-ready", "error": re.envelope()["error"]})),
+                    // Readiness failure is an answer, not a routing error:
+                    // 503 with the reason, the contract REST-API.md and
+                    // openapi.yaml document. A 200 here would tell every
+                    // status-code consumer (probes, load balancers) that a
+                    // dead bridge is ready to serve.
+                    Err(re) => Err(RequestError {
+                        status: 503,
+                        kind: "not-ready".into(),
+                        message: re.message,
+                        feedback: re.feedback,
+                    }),
                 }
             }
             Err(e) => Err(RequestError::internal(e.to_string())),

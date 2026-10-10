@@ -51,7 +51,7 @@ all ten.
    implementation, pinned by hash in the build. Message construction,
    crypto and dialog handling are conformant *by provenance*; rosci's
    job is to expose them without getting in their way.
-2. **Behavioral conformance.** `make interop` (9 tests, live against
+2. **Behavioral conformance.** `make interop` (11 tests, live against
    the reference intermediary product) proves the messages rosci
    produces are accepted, responses verified, feedback classified.
    The spec cannot be executed; the reference intermediary accepting

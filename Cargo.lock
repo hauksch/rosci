@@ -398,7 +398,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "osci"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "base64",
  "proptest",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "osci-cli"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "assert_cmd",
  "base64",
@@ -597,7 +597,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "roscid"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "base64",
  "clap",

@@ -71,8 +71,13 @@ validate() { # $1 = file (may be MIME-packaged), $2 = schema file name
 
 select_order() { # $1 = file → echoes soap schema name or empty
   local token
-  for token in "${!ORDERS[@]}"; do
-    if grep -qi "$token" "$1"; then
+  # G30: Auftrag names nest ("PartialStoreDelivery" contains
+  # "StoreDelivery"), so a match must be word-anchored AND tried
+  # longest-first — an unanchored scan in associative-array hash order
+  # could pick the wrong schema for a partial Auftrag.
+  for token in $(printf '%s\n' "${!ORDERS[@]}" \
+                 | awk '{print length($0), $0}' | sort -rn | cut -d' ' -f2-); do
+    if grep -qiw "$token" "$1"; then
       echo "${ORDERS[$token]}"
       return
     fi

@@ -83,7 +83,9 @@ build: image ## Build everything (Java bridge + mock jars, Rust workspace)
 
 .PHONY: test
 test: image ## Run all tests (Java unit + Rust unit/integration/e2e)
-	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml test
+	# `package`, not `test`, for both jars: the shaded jars must exist or
+	# the Rust e2e suites skip silently — a green run that tested nothing.
+	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml package
 	$(IN_CONTAINER) $(MVN) -f java/osci-mock/pom.xml package
 	$(IN_CONTAINER) cargo test --workspace
 

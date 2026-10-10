@@ -44,11 +44,11 @@ Everything builds inside a pinned container; the host stays Java-free
 ```sh
 make setup     # build the builder image
 make build     # Java bridge + mock jars, Rust workspace
-make test      # all 117 tests, incl. e2e against the local mock intermediary
+make test      # all 133 tests, incl. e2e against the local mock intermediary
 make check     # lint + test + audit + verify-deps in one command (CI runs it too)
 make lint      # rustfmt + clippy -D warnings + mvn verify
 make audit     # cargo-deny + OSV scan of the Java dependency tree
-make release   # dist/bin/rosci + dist/lib/osci-bridge.jar + SHA256SUMS
+make release   # dist/bin/{rosci,roscid} + dist/lib/osci-bridge.jar + SHA256SUMS
 ```
 
 Requirements: `docker` or `podman`, `make`, `git`. Nothing else touches
@@ -153,8 +153,8 @@ native online client when credentials-based lookup is acceptable.
 
 ## Testing
 
-117 tests: Java unit (28), Rust unit/integration/CLI (82), e2e (7),
-plus the opt-in live interop suite (11; `make interop`),
+133 tests: Java unit (28), Rust unit/integration (94), e2e (11: 7 CLI +
+4 REST), plus the opt-in live interop suite (11; `make interop`),
 proptest invariants and doctests. The e2e suite runs the real binary +
 real jar against the mock intermediary with a per-run generated throwaway
 PKI — and every response is *signed* by the mock (XML-DSIG supplier

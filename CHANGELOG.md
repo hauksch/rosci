@@ -7,6 +7,47 @@ written as the work happened and are kept as history.
 
 ## [Unreleased]
 
+### Fixed
+- **roscid `/readyz` answered 200 when the bridge was down** — the
+  failure was wrapped in an `Ok` and sent as `200 {"status":"not-ready"}`,
+  contradicting REST-API.md/openapi.yaml (both promise 503). Readiness
+  probes and load balancers read the status code, so a dead JVM read as
+  ready. Now: 503 with the standard error envelope, kind `not-ready`;
+  covered by a REST e2e that kills the bridge jar and asserts
+  healthz=200/readyz=503.
+- **REVIEW G30 was marked "fixed" but never applied:**
+  `container/xsd-validate.sh` `select_order` still scanned Auftrag
+  tokens unanchored in associative-array hash order, so a
+  `PartialStoreDelivery` envelope could validate against the wrong
+  schema. Now word-anchored (`grep -w`) and tried longest-first; the
+  ledger entry is finally true.
+- **`make test` did not build the bridge jar**, so on a fresh checkout
+  every Rust e2e suite skipped silently and `cargo test` still exited
+  green. The target now runs `mvn package` for both jars (the shaded
+  jar is what the e2e spawns), matching what the header comments
+  always claimed.
+- **Library: malformed `ok:true` bridge responses read as empty
+  success** — `versions()`, `fetch_with()` and `process_card()` used
+  `unwrap_or_default()`, turning a missing `result` payload into an
+  empty version map / "no messages". The Java bridge always populates
+  the op's result field on ok, so absence is now a `BridgeProtocol`
+  error (negative tests included), consistent with `build()`/`submit()`.
+- **REST e2e suite strengthened:** the status-route test accepted
+  200/404/422 (it passed even with the handler deleted — the router's
+  404 fallback satisfied it); `POST /v1/fetch`, `GET /readyz` and
+  `GET /v1/version` had zero coverage; the "round trip" test never
+  fetched. Now: one send→status→fetch round trip asserting the mock's
+  Laufzettel fields, canned XTA payload and decrypted sealed content;
+  readiness/version tests; the auth test no longer races a hardcoded
+  port with `sleep(1)` (free port + bind poll). Assert-free Drop test
+  and tautological serde test replaced with real assertions (PID-death
+  check; round-trip equality).
+- **Stale numbers in docs:** README (117 → 133 tests, release line
+  missing roscid), AUDIT (JaCoCo 0.8.13 → 0.8.15, dist contents, test
+  inventory), STANDARD-COMPLIANCE (9 → 11 interop tests); workspace
+  version 0.1.0 → 0.4.0 so binaries self-report the real release line.
+  Removed a dead duplicate PIN branch in roscid's `read_pin`.
+
 ### Changed
 - **Renamed:** the working name `osci-deshittifier` is retired — the
   project is now **rosci** (build image `rosci-builder`, Java
