@@ -13,6 +13,20 @@ written as the work happened and are kept as history.
   namespaces `de.rosci.osci.{bridge,mock}`, protocol vendor string,
   docs). History is intentionally untouched.
 
+## [Unreleased]
+
+### Added
+- **`roscid` — REST server over OSCI** (`crates/roscid`, new workspace
+  crate): same library, same bridge JVM, exposed as JSON over HTTP —
+  POST /v1/send, POST /v1/fetch, GET /v1/messages/{id}/status,
+  GET /v1/version, GET /healthz|/readyz. Loopback-bound by default;
+  non-loopback binds require OSCI_API_KEY (constant-time Bearer check,
+  /healthz exempt). Supervisor keeps one bridge JVM warm, rebuilds on
+  typed bridge death (osci::Error::is_bridge_death), single-flight via
+  Mutex. Live-verified against the OSCI-Manager test instance: send
+  with attachments (receipt signed, message id assigned) and fetch.
+- `docs/REST-API.md` + `docs/openapi.yaml`: normative REST contract.
+
 ## [0.4.0] — 2026-10-04 — public-release preparation, EFFI, metadata, conformance
 
 ### Added

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/osci", "crates/osci-cli"]
+members = ["crates/osci", "crates/osci-cli", "crates/roscid"]
 exclude = ["fuzz"]
 
 [workspace.package]

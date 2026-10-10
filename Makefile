@@ -163,12 +163,13 @@ fuzz: image ## 60s libFuzzer smoke on the bridge-response parser (pinned nightly
 	  cd fuzz && set -o pipefail && cargo fuzz run bridge_response_parse -- -max_total_time=60 2>&1 | tail -12'
 
 .PHONY: release
-release: image ## Produce dist/: rosci binary, osci-bridge.jar, SHA256SUMS
+release: image ## Produce dist/: rosci + roscid binaries, osci-bridge.jar, SHA256SUMS
 	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml package
 	$(IN_CONTAINER) cargo build --workspace --release
 	$(IN_CONTAINER) bash -c '\
 	  install -d dist/bin dist/lib \
 	  && install -m 0755 target/release/rosci dist/bin/rosci \
+	  && install -m 0755 target/release/roscid dist/bin/roscid \
 	  && install -m 0644 java/osci-bridge/target/osci-bridge.jar dist/lib/osci-bridge.jar \
 	  && cd dist && find . -type f ! -name SHA256SUMS -exec sha256sum {} \; > SHA256SUMS'
 	@echo "Release artifacts in dist/ — checksums in dist/SHA256SUMS."

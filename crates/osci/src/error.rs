@@ -21,6 +21,16 @@ pub enum BridgeErrorKind {
     Internal,
 }
 
+impl Error {
+    /// True when the bridge *process* is gone (EOF on its stdout, stdin
+    /// closed by death) — as opposed to the intermediary rejecting a
+    /// request. Long-lived consumers of the library use this to decide
+    /// whether an operation is retryable with a fresh bridge.
+    pub fn is_bridge_death(&self) -> bool {
+        matches!(self, Error::BridgeProtocol(m) if m.contains("exited before answering") || m.contains("closed its stdin"))
+    }
+}
+
 impl BridgeErrorKind {
     /// Parses a bridge-reported kind string; unknown strings map to Internal.
     pub fn parse(s: &str) -> Self {
