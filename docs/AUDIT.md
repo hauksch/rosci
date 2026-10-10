@@ -38,8 +38,8 @@ make release
 cd dist && sha256sum -c SHA256SUMS
 ```
 
-`dist/` contains `bin/rosci` and `lib/osci-bridge.jar` — keep them together
-or set `OSCI_BRIDGE_JAR`.
+`dist/` contains `bin/rosci`, `bin/roscid` and `lib/osci-bridge.jar` — keep
+them together or set `OSCI_BRIDGE_JAR`.
 
 ## Verify the tests
 
@@ -52,9 +52,10 @@ Test inventory:
 | suite | what it proves |
 |---|---|
 | `osci-bridge` JUnit (28) | JSON contract, PKI parsing, sign/verify + decrypt round-trips, request loop, feedback-row mapping (incl. 3800-warning tolerance), selection-mode mapping, byte-exact fetch content, streamed request transport |
-| `osci` unit/integration (53, incl. 3 proptest invariants) | protocol serde, bridge lifecycle (timeout/garbage/death/desync), client flows incl. protocol-version handshake, DVDV resolution, XTA sniffing, TLS client bundle wiring |
-| `osci-cli` (29) | argument plumbing, output shape, exit codes, jar resolution, loopback guard, fetch write safety |
+| `osci` unit/integration (56, incl. 3 proptest invariants) | protocol serde, bridge lifecycle (timeout/garbage/death/desync), client flows incl. protocol-version handshake, DVDV resolution, XTA sniffing, TLS client bundle wiring, malformed ok-responses rejected |
+| `osci-cli` (31) | argument plumbing, output shape, exit codes, jar resolution, loopback guard, fetch write safety |
 | e2e (7) | the real binary + real jar + mock intermediary: plain-transport send/status/fetch; **transport-encrypted send + status with ciphertext assertions**; failure exit codes; large payload; tampered supplier signature; attachments; **schema validation of captured wire traffic** |
+| `roscid` unit (7) + REST e2e (4) | REST surface over the same stack: exposure/auth guards, Bearer enforcement (positive + negative), healthz vs readiness split, **readiness 503 when the bridge is dead**, version handshake with jar fingerprint, send→status→fetch round trip incl. sealed-content decryption |
 | interop (11, opt-in, live) | the real binary + real jar + the OSCI-Manager test intermediary: send/fetch round trips (incl. attachments and MessageMetaData), EFFI chunked transfer byte-exact, postbox isolation, `--all` warning semantics |
 
 The e2e suite generates its own throwaway PKI per run (`tests/gen-pki.sh`)
@@ -67,7 +68,7 @@ opt-in interop suite covers it (docs/TEST-INFRASTRUCTURE.md).
 | component | instrument | line coverage |
 |---|---|---|
 | Rust workspace (unit/integration/CLI) | cargo-llvm-cov, pinned in builder image | 88.0% |
-| Java bridge, unit tests only | JaCoCo 0.8.13 (maven plugin) | 27.5% |
+| Java bridge, unit tests only | JaCoCo 0.8.15 (maven plugin) | 27.5% |
 | Java bridge, e2e only | JaCoCo agent attached via `OSCI_JAVA_OPTS` during the e2e suite | 68.2% |
 | Java bridge, **combined** | jacococli merge of both runs | **71.4%** |
 

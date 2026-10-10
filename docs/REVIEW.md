@@ -205,7 +205,7 @@ fixed as G27); test-count claims now match reality everywhere (G8, G47).
 | G27 | `README.md` — synopsis | missing `--tls-client-pin`/`--insecure-transport`; status/fetch lines omitted required connection flags | **fixed** |
 | G28 | `interop.rs` — `gate()` | fixture checksum verification ran after the network preflight (tampering undetected when offline) | **fixed** (verify first) |
 | G29 | `e2e.rs` — metadata assertion | asserted only the generic header name, not the author identifier | **fixed** |
-| G30 | `xsd-validate.sh` — Auftrag scan | `PartialStoreDelivery` contains `StoreDelivery`; unordered token scan could pick the wrong schema | **fixed** (anchored match) |
+| G30 | `xsd-validate.sh` — Auftrag scan | `PartialStoreDelivery` contains `StoreDelivery`; unordered token scan could pick the wrong schema | **fixed** (word-anchored + longest-first; the "fixed" recorded at 1306d8f was premature — the code was unchanged until the 2026-10-10 re-audit) |
 | G31 | `interop.rs` — `fetch --all` leg | depends on alice's shared public postbox staying empty | left open (documented) |
 | G32 | `conn_tls` | zero test coverage for the new TLS flag logic | **fixed** (4 unit tests) |
 | G33 | `cli.rs` — help test | name promised exit codes, body asserted `--to` | **fixed** (root help asserted) |
