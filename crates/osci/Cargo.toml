@@ -9,10 +9,15 @@ license.workspace = true
 # OSCI-Rust-Rewrite stack (dialogs, message compose/parse, crypto, transport).
 # Pinned by rev until oscirs starts tagging; bump via `cargo update -p osci_rs`.
 osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "8ad8dec9a90a93a95e20e2cfa4d58a1914fd7d75" }
+osci_crypto = { package = "osci-crypto", git = "https://github.com/hauksch/oscirs", rev = "8ad8dec9a90a93a95e20e2cfa4d58a1914fd7d75" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 base64 = { workspace = true }
+# PKCS#12 keystore parsing (the bridge identity format). Legacy OSCI
+# keystores use PBES1 3DES/RC2, so the legacy cipher features stay on.
+p12-keystore = "0.4"
+rsa = { version = "0.9.10", features = ["sha2"] }
 tracing = { workspace = true }
 zeroize = { workspace = true, features = ["serde"] }
 
@@ -26,3 +31,4 @@ expect_used = "warn"
 [dev-dependencies]
 tempfile = "3"
 proptest = { workspace = true }
+rand = "0.8"

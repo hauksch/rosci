@@ -41,6 +41,8 @@ mod client;
 mod config;
 pub mod dvdv;
 mod error;
+/// PKCS#12 keystore parsing feeding the native oscirs crypto SPIs.
+pub mod p12;
 // Wire types mirroring the Java side field-for-field; their contract is
 // documented normatively in docs/PROTOCOL.md, which is where it lives.
 #[allow(missing_docs)]
