@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# OSCI-Rust-Rewrite stack (dialogs, message compose/parse, crypto, transport).
+# Pinned by rev until oscirs starts tagging; bump via `cargo update -p osci_rs`.
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "8ad8dec9a90a93a95e20e2cfa4d58a1914fd7d75" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
