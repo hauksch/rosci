@@ -17,7 +17,7 @@ clap = { version = "4", features = ["derive", "env"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tiny_http = "0.12"
-signal-hook = "0.3"
+signal-hook = "0.4"
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 zeroize = { workspace = true }
