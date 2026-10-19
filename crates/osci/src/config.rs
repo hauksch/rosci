@@ -94,6 +94,27 @@ impl Identity {
         })
     }
 
+    /// Identity from in-memory PKCS#12 bytes (the native client's path —
+    /// no temp files on disk, the bytes are base64'd once and scrubbed on
+    /// drop like the file-based variant).
+    pub fn from_p12_b64(
+        signer_p12_b64: impl Into<String>,
+        signer_pin: &str,
+        decrypter_p12_b64: Option<String>,
+        decrypter_pin: Option<&str>,
+    ) -> Result<Self, Error> {
+        let signer_p12_b64 = signer_p12_b64.into();
+        if signer_p12_b64.is_empty() {
+            return Err(Error::Config("empty signer PKCS#12".into()));
+        }
+        Ok(Self {
+            signer_p12_b64,
+            signer_pin: Zeroizing::new(signer_pin.to_string()),
+            decrypter_p12_b64,
+            decrypter_pin: decrypter_pin.map(|p| Zeroizing::new(p.to_string())),
+        })
+    }
+
     pub(crate) fn to_msg(&self) -> IdentityMsg {
         IdentityMsg {
             signer_p12: Some(self.signer_p12_b64.clone()),

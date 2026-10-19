@@ -25,6 +25,7 @@ use crate::error::Error;
 
 /// A parsed PKCS#12 identity: RSA private key plus its certificate chain
 /// (leaf first, like the keystore stores it).
+#[derive(Clone)]
 pub struct P12Keypair {
     key: rsa::RsaPrivateKey,
     /// Leaf certificate, as the oscirs crypto layer wants it.

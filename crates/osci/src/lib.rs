@@ -41,6 +41,8 @@ mod client;
 mod config;
 pub mod dvdv;
 mod error;
+/// The native OSCI client on the oscirs stack (no JVM sidecar).
+pub mod native;
 /// PKCS#12 keystore parsing feeding the native oscirs crypto SPIs.
 pub mod p12;
 // Wire types mirroring the Java side field-for-field; their contract is
