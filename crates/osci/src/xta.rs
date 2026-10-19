@@ -54,15 +54,6 @@ impl Xta {
         }
         Self { filename, data }
     }
-
-    pub(crate) fn to_payload(&self) -> crate::protocol::Payload {
-        use base64::Engine as _;
-        crate::protocol::Payload {
-            filename: Some(self.filename.clone()),
-            content_type: Some("application/octet-stream".to_string()),
-            data: base64::engine::general_purpose::STANDARD.encode(&self.data),
-        }
-    }
 }
 
 /// Best-effort root element sniff: finds the first element tag in an XML
@@ -183,17 +174,5 @@ mod tests {
         assert_eq!(sniff_root_element(b""), None);
         assert_eq!(sniff_root_element(b"\n  \t\n"), None);
         assert_eq!(sniff_root_element(b"< not-a-tag"), None);
-    }
-
-    #[test]
-    fn payload_carries_opaque_bytes() {
-        let xta = Xta::from_bytes("m.xta", b"\x00\x01\xffplain not utf8".to_vec());
-        let payload = xta.to_payload();
-        assert_eq!(payload.filename.as_deref(), Some("m.xta"));
-        use base64::Engine as _;
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(payload.data)
-            .unwrap();
-        assert_eq!(decoded, b"\x00\x01\xffplain not utf8");
     }
 }

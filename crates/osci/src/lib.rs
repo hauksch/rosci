@@ -36,7 +36,6 @@
 //! Error taxonomy and process exit codes: see [`Error`]. The wire protocol
 //! with the bridge is documented in `docs/PROTOCOL.md` and versioned.
 
-pub mod bridge;
 mod client;
 mod config;
 pub mod dvdv;
@@ -51,14 +50,13 @@ pub mod p12;
 pub mod protocol;
 mod xta;
 
-pub use bridge::{BridgeConfig, BridgeHandle};
 pub use client::{
-    default_jar_path, resolve_dvdv, url_host_is_loopback, FetchQuery, OsciClient, Recipient,
-    SendBuilder,
+    resolve_dvdv, url_host_is_loopback, FetchQuery, OsciClient, Recipient, SendBuilder,
 };
 pub use config::{read_certificate_file, Identity, Intermediary, Tls};
 pub use dvdv::{DvdvDirectory, DvdvEntry, FileDvdv};
 pub use error::{BridgeErrorKind, Error};
+pub use native::NativeClient;
 pub use protocol::{FetchedContent, FetchedMessage, ProcessCard, Receipt, VersionInfo};
 pub use xta::{read_all_stdin, sniff_root_element, Xta};
 

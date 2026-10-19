@@ -189,6 +189,7 @@ impl E2e {
             repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
         )
         .env("OSCI_CERT_PIN", "testpin")
+        .env("ROSCI_DEBUG", "1")
         // The bridge renders OSCI timestamps in local time (the library's
         // doing); the canned assertions are UTC. Inherit TZ through to the
         // JVM so a CEST laptop and the UTC container assert the same thing.
@@ -204,7 +205,7 @@ fn send_fetch_status_against_mock_intermediary() {
         return;
     };
 
-    // --- version handshake includes the jar fingerprint -----------------
+    // --- version handshake reports the native stack ----------------------
     let version_out = e2e
         .rosci()
         .arg("version")
@@ -215,10 +216,8 @@ fn send_fetch_status_against_mock_intermediary() {
         .clone();
     let version_text = String::from_utf8_lossy(&version_out);
     assert!(
-        version_text.lines().any(|l| {
-            l.starts_with("jar_sha256") && l[l.find(' ').unwrap_or(0)..].trim().len() == 64
-        }),
-        "version must report a 64-hex jar fingerprint: {version_text}"
+        version_text.contains("oscirs") && version_text.contains("protocol"),
+        "version must report the native stack: {version_text}"
     );
 
     // --- send via DVDV resolution, full crypto path ---------------------

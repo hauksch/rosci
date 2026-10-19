@@ -300,7 +300,7 @@ fn native_send_roundtrip_with_full_crypto() {
             true,
         )
         .unwrap();
-    assert_eq!(receipt.message_id, "bXNnLTQ3MTE=");
+    assert_eq!(receipt.message_id, "msg-4711");
     assert!(receipt.feedback.unwrap()[0][1].starts_with('0'));
 
     let (fetched, _feedback) = client.fetch(None).unwrap();

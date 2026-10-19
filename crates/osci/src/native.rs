@@ -40,6 +40,27 @@ fn feedback_is_acceptable(code: &str) -> bool {
     code.starts_with('0') || code == "3800"
 }
 
+/// Pulls the text of the first `<osci:MessageId>` element out of the raw
+/// response — the fallback for response shapes oscirs's typed parser does
+/// not surface as `request` fields.
+fn extract_message_id_raw(xml: &[u8]) -> Option<String> {
+    let start = xml.windows(16).position(|w| w == b"<osci:MessageId>")? + 16;
+    let rest = &xml[start..];
+    let close = rest.windows(17).position(|w| w == b"</osci:MessageId>")?;
+    Some(String::from_utf8_lossy(&rest[..close]).into_owned())
+}
+
+/// Message ids travel base64-encoded on the wire (`osci:MessageId`);
+/// consumers quote the decoded form, exactly what the Java library's
+/// `getMessageId()` returned. Undecodable ids pass through unchanged —
+/// we print what the intermediary said, not what we hoped it said.
+fn decode_message_id(raw: String) -> String {
+    match base64::decode(&raw) {
+        Ok(bytes) => String::from_utf8(bytes).unwrap_or(raw),
+        Err(_) => raw,
+    }
+}
+
 /// Escape text destined for a raw-XML slot (`entry_inner`).
 fn xml_escape(text: &str) -> String {
     text.replace('&', "&amp;")
@@ -103,29 +124,13 @@ impl NativeClient {
         response_timeout: std::time::Duration,
         insecure_transport: bool,
     ) -> Result<Self, Error> {
-        let msg = identity.to_msg();
-        let signer_b64 = msg
-            .signer_p12
-            .as_deref()
-            .ok_or_else(|| Error::Config("identity carries no signer PKCS#12".into()))?;
-        let signer_p12 = base64::decode(signer_b64)
-            .map_err(|e| Error::Config(format!("signer PKCS#12 base64: {e}")))?;
-        let signer_pin = msg.signer_pin.as_ref().map(|p| p.as_str()).unwrap_or("");
-        let decrypter_p12 = match &msg.decrypter_p12 {
-            Some(p12) => base64::decode(p12)
-                .map_err(|e| Error::Config(format!("decrypter PKCS#12 base64: {e}")))?,
-            None => signer_p12.clone(),
-        };
-        let decrypter_pin = match (&msg.decrypter_pin, &msg.signer_pin) {
-            (Some(pin), _) => pin.as_str(),
-            (None, Some(pin)) => pin.as_str(),
-            (None, None) => "",
-        };
+        let (signer_p12, signer_pin) = identity.signer_material()?;
+        let (decrypter_p12, decrypter_pin) = identity.decrypter_material()?;
 
         Ok(Self {
             intermediary,
-            signer_keypair: Arc::new(P12Keypair::parse(&signer_p12, signer_pin)?),
-            decrypter_keypair: Arc::new(P12Keypair::parse(&decrypter_p12, decrypter_pin)?),
+            signer_keypair: Arc::new(P12Keypair::parse(&signer_p12, &signer_pin)?),
+            decrypter_keypair: Arc::new(P12Keypair::parse(&decrypter_p12, &decrypter_pin)?),
             timeout_ms: u64::try_from(response_timeout.as_millis()).unwrap_or(u64::MAX),
             insecure_transport,
         })
@@ -167,10 +172,26 @@ impl NativeClient {
             .send(&mut get_id, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&rsp)?;
-        let message_id = rsp
+        // The id rides in the response entry; oscirs only fills
+        // `request` from a nested echoed request element, which real
+        // ResponseToGetMessageId messages do not carry (the Java
+        // reference writes the MessageId directly into the entry) — so
+        // fall back to the raw response XML.
+        let reserved = rsp
             .request
-            .and_then(|r| r.message_id)
-            .ok_or_else(|| Error::BridgeProtocol("GetMessageId response carried no id".into()))?;
+            .as_ref()
+            .and_then(|r| r.message_id.clone())
+            .or_else(|| extract_message_id_raw(&capture.lock().unwrap_or_else(|p| p.into_inner())))
+            .ok_or_else(|| {
+                if std::env::var_os("ROSCI_DEBUG").is_some() {
+                    eprintln!(
+                        "ROSCI_DEBUG: response bytes:\n{}",
+                        String::from_utf8_lossy(&capture.lock().unwrap_or_else(|p| p.into_inner()))
+                    );
+                }
+                Error::BridgeProtocol("GetMessageId response carried no id".into())
+            })?;
+        let message_id = decode_message_id(reserved);
 
         // Round 2: the store delivery itself.
         let mut store = self.base_message(MessageType::StoreDelivery, Some(&recipient));
@@ -220,17 +241,16 @@ impl NativeClient {
                 .map_err(native_error)?
         };
         check_feedback(&response)?;
+        let signed = verify_response_signature(&capture)?;
 
         // The StoreDelivery response echoes the message id (Java reads the
-        // id from the response, not from our reservation) and its
-        // signature presence decides `response_signed`.
+        // id from the response, not from our reservation).
         let message_id = response
             .request
             .as_ref()
             .and_then(|r| r.message_id.clone())
+            .map(decode_message_id)
             .unwrap_or(message_id);
-        let signed = String::from_utf8_lossy(&capture.lock().unwrap_or_else(|p| p.into_inner()))
-            .contains("osci:ClientSignature");
 
         Ok(Receipt {
             message_id,
@@ -260,6 +280,7 @@ impl NativeClient {
             .send(&mut fetch, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&response)?;
+        verify_response_signature(&capture)?;
 
         let xml = capture.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let stored = oci::StoredMessage::load(&xml)
@@ -293,7 +314,7 @@ impl NativeClient {
 
     /// Fetches the Laufzettel (process card) for a message we sent.
     pub fn process_card(&self, message_id: &str) -> Result<Vec<ProcessCard>, Error> {
-        let (mut dialog, _capture) = self.dialog()?;
+        let (mut dialog, capture) = self.dialog()?;
         let mut init = self.base_message(MessageType::InitDialog, None);
         dialog
             .send(&mut init, &[], &boundary())
@@ -305,6 +326,7 @@ impl NativeClient {
             .send(&mut card, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&response)?;
+        verify_response_signature(&capture)?;
 
         let mut cards = Vec::new();
         for bundle in &response.process_card_bundles {
@@ -439,6 +461,31 @@ fn feedback_rows(message: &OsciMessage) -> Vec<Vec<String>> {
         .iter()
         .map(|f| vec![f.text.clone(), f.code.clone()])
         .collect()
+}
+
+/// Verifies the response's transport signature, when it carries one. The
+/// Java library verified incoming signatures automatically and failed
+/// loudly; the native path must be equally suspicious. Signature material
+/// (the intermediary's certificate) travels in the message itself.
+fn verify_response_signature(capture: &std::sync::Mutex<Vec<u8>>) -> Result<bool, Error> {
+    let xml = capture.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let text = String::from_utf8_lossy(&xml).into_owned();
+    if !text.contains("osci:ClientSignature") {
+        return Ok(false);
+    }
+    match oci::security::verify_message(&text, &[]) {
+        Ok(report) if report.all_valid() => Ok(true),
+        Ok(report) => Err(Error::Bridge {
+            kind: crate::error::BridgeErrorKind::Osci,
+            message: format!("response signature invalid: {report:?}"),
+            feedback: Vec::new(),
+        }),
+        Err(e) => Err(Error::Bridge {
+            kind: crate::error::BridgeErrorKind::Osci,
+            message: format!("response signature unverifiable: {e}"),
+            feedback: Vec::new(),
+        }),
+    }
 }
 
 /// Java-bridge feedback classification: receipts pass, 3800 passes,

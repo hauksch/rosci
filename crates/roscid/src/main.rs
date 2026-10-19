@@ -70,10 +70,6 @@ struct Args {
     /// Test mode: plain SOAP transport (loopback intermediaries only).
     #[arg(long)]
     insecure_transport: bool,
-
-    /// Bridge jar override; default is the library's resolution chain.
-    #[arg(long, env = "OSCI_BRIDGE_JAR")]
-    bridge_jar: Option<PathBuf>,
 }
 
 fn main() {
@@ -98,7 +94,6 @@ fn main() {
         dvdv_file: args.dvdv_file.clone(),
         response_timeout: Duration::from_secs(args.response_timeout_secs),
         insecure_transport: args.insecure_transport,
-        bridge_jar: args.bridge_jar.clone(),
     };
     if let Err(e) = cfg.validate() {
         eprintln!("roscid: configuration error: {e}");
