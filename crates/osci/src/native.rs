@@ -188,11 +188,11 @@ impl NativeClient {
         };
         container
             .contents
-            .push(inline_content("content1", &xta.data));
+            .push(inline_content("content1", &xta.data)?);
         for (n, att) in attachments.iter().enumerate() {
             container
                 .contents
-                .push(inline_content(&format!("attachment-{}", n + 1), &att.data));
+                .push(inline_content(&format!("attachment-{}", n + 1), &att.data)?);
         }
 
         let boundary = boundary();
@@ -278,12 +278,7 @@ impl NativeClient {
             match decrypt_encrypted_data(&xml_text, 0, &[&decrypter]) {
                 Ok(content) => {
                     message.signatures_valid = Some(verify_quietly(&content.plaintext));
-                    message.encrypted_contents = Some(vec![FetchedContent {
-                        filename: None,
-                        content_type: None,
-                        data: base64::encode(&content.plaintext),
-                        container: Some("encrypted".into()),
-                    }]);
+                    message.encrypted_contents = Some(container_contents(&content.plaintext));
                 }
                 Err(e) => {
                     message.subject =
@@ -406,13 +401,25 @@ impl NativeClient {
     }
 }
 
-/// One inline content unit: the payload as base64 text.
-fn inline_content(id: &str, data: &[u8]) -> OutContent {
-    OutContent {
+/// One inline content unit. The composer base64-encodes `text` exactly
+/// once on the wire, so `text` must carry the raw payload — which restricts
+/// inline content to UTF-8 payloads. Binary XTA files ride as MIME
+/// attachments in the Java library's shape; oscirs's `encrypt_container`
+/// cannot take them into the encrypted blob yet, so until that lands
+/// upstream we fail loudly instead of shipping cleartext binary.
+fn inline_content(id: &str, data: &[u8]) -> Result<OutContent, Error> {
+    let text = std::str::from_utf8(data).map_err(|_| {
+        Error::Config(
+            "binary XTA payload: the native stack cannot encrypt MIME attachments yet \
+             (oscirs gap) — re-encode the payload or use the Java bridge for this message"
+                .into(),
+        )
+    })?;
+    Ok(OutContent {
         id: id.to_string(),
-        text: Some(base64::encode(data)),
+        text: Some(text.to_string()),
         href: None,
-    }
+    })
 }
 
 fn cert_entry(role: CertRole, use_: CertUse, id: &str, der: &[u8]) -> OutCertEntry {
@@ -450,6 +457,35 @@ fn check_feedback(message: &OsciMessage) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+/// Extracts the content rows of a decrypted ContentContainer XML: every
+/// `osci:Content`'s `Base64Content` text, still base64 (the wire encoding
+/// our consumers already speak).
+fn container_contents(container_xml: &[u8]) -> Vec<FetchedContent> {
+    let Ok(doc) = osci_core::xml::parser::parse(&String::from_utf8_lossy(container_xml)) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    fn walk(element: &osci_core::xml::Element, out: &mut Vec<FetchedContent>) {
+        if element.local == "Content" {
+            for child in element.elements() {
+                if child.local == "Base64Content" {
+                    out.push(FetchedContent {
+                        filename: None,
+                        content_type: None,
+                        data: child.text(),
+                        container: Some("encrypted".into()),
+                    });
+                }
+            }
+        }
+        for child in element.elements() {
+            walk(child, out);
+        }
+    }
+    walk(&doc.root, &mut out);
+    out
 }
 
 /// Best-effort signature verdict for a standalone container XML.

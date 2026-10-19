@@ -83,7 +83,11 @@ fn openssl_keystore(cn: &str) -> (Vec<u8>, String) {
 /// every message kind the native client drives. When the request is a
 /// transport-encrypted envelope, it is decrypted first — the real thing,
 /// then, just on a TCP socket instead of gov.test.osci.de.
-fn serve(listener: TcpListener, intermediary_decrypter: P12Decrypter) {
+fn serve(
+    listener: TcpListener,
+    intermediary_decrypter: P12Decrypter,
+    client_cipher_cert: Option<String>,
+) {
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let mut stream = stream;
@@ -102,7 +106,11 @@ fn serve(listener: TcpListener, intermediary_decrypter: P12Decrypter) {
                 }
             }
             let body = body_of(&request).to_vec();
-            let response = handle(&body, &intermediary_decrypter);
+            let response = handle(
+                &body,
+                &intermediary_decrypter,
+                client_cipher_cert.as_deref(),
+            );
             let head = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 response.len()
@@ -111,6 +119,18 @@ fn serve(listener: TcpListener, intermediary_decrypter: P12Decrypter) {
             stream.write_all(&response).unwrap();
         }
     });
+}
+
+/// Extracts the DER certificate from a PEM string.
+fn pem_certificate(pem: &str) -> osci_rs::Certificate {
+    let start = pem.find("-----BEGIN CERTIFICATE-----").unwrap() + 27;
+    let after = &pem[start..];
+    let end = after.find("-----END CERTIFICATE-----").unwrap();
+    let b64: String = after[..end]
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    osci_rs::Certificate::from_der(&base64::decode(&b64).unwrap()).unwrap()
 }
 
 fn content_length(raw: &[u8]) -> Option<usize> {
@@ -128,7 +148,11 @@ fn body_of(raw: &[u8]) -> &[u8] {
     &raw[header_end + 4..]
 }
 
-fn handle(body: &[u8], intermediary_decrypter: &P12Decrypter) -> Vec<u8> {
+fn handle(
+    body: &[u8],
+    intermediary_decrypter: &P12Decrypter,
+    client_cipher_cert: Option<&str>,
+) -> Vec<u8> {
     // transport-decrypt when the envelope is encrypted (the native client
     // sends encrypted unless the test disables it)
     let stored = StoredMessage::load(body).unwrap();
@@ -171,6 +195,32 @@ fn handle(body: &[u8], intermediary_decrypter: &P12Decrypter) -> Vec<u8> {
         }],
         ..Default::default()
     };
+    if kind == MessageType::FetchDelivery {
+        let client_cert_pem = client_cipher_cert.expect("fetch test needs a client cert");
+        let client_cert = pem_certificate(client_cert_pem);
+        let container = osci_core::message::compose::OutContentContainer {
+            id: "contentcontainer".into(),
+            contents: vec![osci_core::message::compose::OutContent {
+                id: "content1".into(),
+                // raw text — the composer base64-encodes once on the wire
+                text: Some("gefetchte XTA-Daten".to_string()),
+                href: None,
+            }],
+        };
+        let recipients = vec![osci_rs::security::EncRecipient {
+            cert: client_cert,
+            cert_element_id: "originator_cipher".into(),
+        }];
+        let enc = osci_rs::security::encrypt_container(
+            &container,
+            &recipients,
+            &osci_rs::security::EncryptConfig::default(),
+            Some("encdata_0".into()),
+            None,
+        )
+        .unwrap();
+        out.encrypted_data.push(enc);
+    }
     if kind == MessageType::GetMessageId {
         // The response entry carries the echoed request; the id lives
         // nested inside it (that is where the parser looks). The xmlns
@@ -227,7 +277,7 @@ fn native_send_roundtrip_with_full_crypto() {
     let port = listener.local_addr().unwrap().port();
     let intermediary_decrypter =
         P12Decrypter::new(P12Keypair::parse(&intermediary_p12, PIN).unwrap());
-    serve(listener, intermediary_decrypter);
+    serve(listener, intermediary_decrypter, Some(signer_cert.clone()));
 
     let client = NativeClient::new(
         Intermediary::new(
@@ -252,6 +302,12 @@ fn native_send_roundtrip_with_full_crypto() {
         .unwrap();
     assert_eq!(receipt.message_id, "bXNnLTQ3MTE=");
     assert!(receipt.feedback.unwrap()[0][1].starts_with('0'));
+
+    let (fetched, _feedback) = client.fetch(None).unwrap();
+    assert_eq!(fetched.len(), 1);
+    let encrypted = fetched[0].encrypted_contents.as_ref().expect("decrypted");
+    // FetchedContent.data is base64 by protocol contract
+    assert_eq!(encrypted[0].data, base64::encode(b"gefetchte XTA-Daten"));
 
     let versions = client.versions();
     assert_eq!(versions.get("protocol").map(String::as_str), Some("1"));
