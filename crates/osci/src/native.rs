@@ -44,9 +44,9 @@ fn feedback_is_acceptable(code: &str) -> bool {
 /// response — the fallback for response shapes oscirs's typed parser does
 /// not surface as `request` fields.
 fn extract_message_id_raw(xml: &[u8]) -> Option<String> {
-    let start = xml.windows(16).position(|w| w == b"<osci:MessageId>")? + 16;
+    let start = find_bytes(xml, b"<osci:MessageId>")? + b"<osci:MessageId>".len();
     let rest = &xml[start..];
-    let close = rest.windows(17).position(|w| w == b"</osci:MessageId>")?;
+    let close = find_bytes(rest, b"</osci:MessageId>")?;
     Some(String::from_utf8_lossy(&rest[..close]).into_owned())
 }
 
@@ -71,22 +71,68 @@ fn xml_escape(text: &str) -> String {
 /// Handle on the last raw transport response.
 type ResponseCapture = Arc<Mutex<Vec<u8>>>;
 
-/// Transport wrapper that keeps the last raw response around — fetch-side
-/// decryption needs the response XML, which `Dialog::send`'s return value
-/// (the parsed message) does not carry.
+/// Substring search that keeps needle lengths honest (two wire-shape bugs
+/// here were exactly off-by-needle-length window searches).
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    find_bytes(haystack, needle).is_some()
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Transport wrapper with two jobs: keep the last raw response around
+/// (fetch-side decryption needs the response XML, which `Dialog::send`'s
+/// return value does not carry), and peel transport-encrypted response
+/// envelopes — in secure mode the intermediary encrypts its response back
+/// to our cipher certificate, and the dialog machinery expects a plain
+/// signed stream.
 struct CapturingTransport {
     inner: HttpTransport,
     last_response: Arc<Mutex<Vec<u8>>>,
+    /// Our decrypters, for unwrapping response envelopes.
+    decrypters: Vec<Arc<P12Decrypter>>,
+}
+
+impl CapturingTransport {
+    /// True when the stream is a transport envelope (SOAP body is one
+    /// EncryptedData, no readable message entry) rather than a plain
+    /// signed message.
+    fn is_transport_envelope(xml: &[u8]) -> bool {
+        !contains_bytes(xml, b"<soap:Header") && contains_bytes(xml, b"xenc:EncryptedData")
+    }
 }
 
 impl Transport for CapturingTransport {
     fn send(&self, message: &[u8]) -> Result<Vec<u8>, TransportError> {
         let response = self.inner.send(message)?;
+
+        let plain = if Self::is_transport_envelope(&response) {
+            let stored = oci::StoredMessage::load(&response)
+                .map_err(|e| TransportError(format!("transport envelope unparseable: {e}")))?;
+            let like = oci::security::StoredMessageLike {
+                xml: &stored.xml,
+                attachments: &stored.attachments,
+            };
+            let refs: Vec<&dyn oci::Decrypter> = self
+                .decrypters
+                .iter()
+                .map(|arc| &**arc as &dyn oci::Decrypter)
+                .collect();
+            oci::security::decrypt_transport_message(&like, &refs)
+                .map_err(|e| TransportError(format!("response transport decryption: {e}")))?
+        } else {
+            response.clone()
+        };
+
         *self
             .last_response
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = response.clone();
-        Ok(response)
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = plain.clone();
+        Ok(plain)
     }
 }
 
@@ -377,6 +423,9 @@ impl NativeClient {
         let capturing = CapturingTransport {
             inner: transport,
             last_response: capture.clone(),
+            decrypters: vec![Arc::new(P12Decrypter::new(
+                (*self.decrypter_keypair).clone(),
+            ))],
         };
         let signer = P12Signer::new((*self.signer_keypair).clone(), None);
         let mut dialog = Dialog::new(Box::new(capturing))
@@ -469,8 +518,17 @@ fn feedback_rows(message: &OsciMessage) -> Vec<Vec<String>> {
 /// (the intermediary's certificate) travels in the message itself.
 fn verify_response_signature(capture: &std::sync::Mutex<Vec<u8>>) -> Result<bool, Error> {
     let xml = capture.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    let text = String::from_utf8_lossy(&xml).into_owned();
-    if !text.contains("osci:ClientSignature") {
+    // verify the XML part, not the MIME stream — the verifier is an XML
+    // creature
+    let stored = oci::StoredMessage::load(&xml).map_err(|e| Error::Bridge {
+        kind: crate::error::BridgeErrorKind::Osci,
+        message: format!("response unparseable during signature check: {e}"),
+        feedback: Vec::new(),
+    })?;
+    let text = String::from_utf8_lossy(&stored.xml).into_owned();
+    // responses carry ClientSignature (supplier-less setups) or
+    // SupplierSignature (the intermediary signs) — verify whichever rides
+    if !text.contains("osci:ClientSignature") && !text.contains("osci:SupplierSignature") {
         return Ok(false);
     }
     match oci::security::verify_message(&text, &[]) {
