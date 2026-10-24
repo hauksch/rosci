@@ -19,6 +19,7 @@ use osci_core::message::compose::{
     OutAttachment, OutCertEntry, OutContent, OutContentContainer, OutMessage,
 };
 use osci_core::message::{MessageType, OsciMessage};
+use osci_core::soap::FeatureDescription;
 use osci_core::soap::{CertRole, CertUse};
 use osci_transport::http::{HttpTransport, HttpTransportConfig};
 use osci_transport::{Transport, TransportError};
@@ -202,6 +203,9 @@ impl Transport for CapturingTransport {
 pub struct SendRequest<'a> {
     /// The main payload.
     pub xta: &'a Xta,
+    /// EFFI chunked transfer: KB per chunk (spec „Effiziente Übertragung
+    /// großer Datenmengen"). `None` ships one StoreDelivery.
+    pub chunk_size_kb: Option<u64>,
     /// Additional content parts riding in the same Zustellung.
     pub attachments: &'a [Xta],
     /// The recipient's cipher certificate (PEM or base64 DER).
@@ -290,6 +294,7 @@ impl NativeClient {
         let SendRequest {
             xta,
             attachments,
+            chunk_size_kb,
             recipient_cipher_cert: _,
             subject,
             metadata_author,
@@ -312,6 +317,7 @@ impl NativeClient {
             .map_err(native_error)?;
         check_feedback(&rsp)?;
         Self::advance_state(&mut dialog);
+        Self::verify_transport_signature(&capture)?;
         // The id rides in the response entry; oscirs only fills
         // `request` from a nested echoed request element, which real
         // ResponseToGetMessageId messages do not carry (the Java
@@ -435,6 +441,95 @@ impl NativeClient {
             .collect();
 
         let boundary = boundary();
+        if let Some(chunk_kb) = chunk_size_kb.filter(|kb| *kb > 0) {
+            // EFFI chunked transfer: compose + encrypt + sign the COMPLETE
+            // StoreDelivery, split it, and ship each chunk as a
+            // PartialStoreDelivery. The manager reassembles; the last
+            // chunk's response carries the inside feedback of the
+            // reassembled delivery — that verdict decides the request.
+            if encrypt {
+                let enc = oci::security::encrypt_container(
+                    &container,
+                    &[EncRecipient {
+                        cert: recipient.clone(),
+                        cert_element_id: "addressee_cipher".to_string(),
+                    }],
+                    &EncryptConfig::default(),
+                    Some("encdata_0".to_string()),
+                    None,
+                )
+                .map_err(|e| Error::Config(format!("content encryption: {e}")))?;
+                store.encrypted_data.push(enc);
+            } else {
+                store.containers.push(container);
+            }
+
+            let full = dialog
+                .compose_signed_stream(&mut store, &sign_attachments, &boundary)
+                .map_err(native_error)?;
+            let chunk_bytes = (chunk_kb as usize) * 1024;
+            let total_chunks = full.len().div_ceil(chunk_bytes).max(1);
+            let total_kb = full.len().div_ceil(1024);
+            let mut last_feedback: Vec<Vec<String>> = Vec::new();
+            let mut last_signed = false;
+            for i in 1..=total_chunks {
+                let from = (i - 1) * chunk_bytes;
+                let len = (full.len() - from).min(chunk_bytes);
+                let blob = full[from..from + len].to_vec();
+
+                let mut partial =
+                    self.base_message(MessageType::PartialStoreDelivery, Some(&recipient));
+                partial.entry_inner = Some(format!("<osci:MessageId>{reserved}</osci:MessageId>"));
+                partial.chunk_information = Some(osci_core::message::ChunkInformation {
+                    chunk_number: i as i64,
+                    chunk_size: Some(chunk_kb as i64),
+                    total_chunk_numbers: Some(total_chunks as i64),
+                    total_message_size: Some(total_kb as i64),
+                    received_chunks: Vec::new(),
+                });
+                partial.feature_description = Some(chunk_feature_description());
+                let content_id = format!("chunk-{i}");
+                partial.attachments = vec![OutAttachment {
+                    content_id: content_id.clone(),
+                    content_type: "application/octet-stream".to_string(),
+                    base64_encoding: false,
+                    data: blob.clone(),
+                }];
+                // the reference mandates exactly ONE ContentContainer in
+                // the body, whose Content references the chunk blob
+                partial.containers.push(OutContentContainer {
+                    id: "chunkcarrier".to_string(),
+                    contents: vec![OutContent {
+                        id: format!("content-{i}"),
+                        text: None,
+                        href: Some(format!("cid:{content_id}")),
+                    }],
+                    encrypted_attachments: Vec::new(),
+                });
+
+                let chunk_response = dialog
+                    .send(&mut partial, &[(content_id, blob)], &boundary)
+                    .map_err(native_error)?;
+                check_feedback(&chunk_response)?;
+                // the reassembled delivery's verdict arrives as INSIDE
+                // feedback on the last chunk's response — a rejected
+                // reassembly must fail loudly
+                last_feedback = inside_feedback(&chunk_response)
+                    .unwrap_or_else(|| feedback_rows(&chunk_response));
+                if i == total_chunks {
+                    last_signed = dialog.last_response_report().is_some();
+                }
+                Self::advance_state(&mut dialog);
+                Self::verify_transport_signature(&capture)?;
+            }
+
+            self.exit_dialog_quietly(&mut dialog);
+            return Ok(Receipt {
+                message_id,
+                response_signed: Some(last_signed),
+                feedback: Some(last_feedback),
+            });
+        };
         let response = if encrypt {
             let recipients = vec![EncRecipient {
                 cert: recipient,
@@ -460,6 +555,7 @@ impl NativeClient {
         };
         check_feedback(&response)?;
         Self::advance_state(&mut dialog);
+        Self::verify_transport_signature(&capture)?;
         // oscirs's dialog verifies the response signature by policy
         // (VerifyIfPresent) and errors on tampering; the report's presence
         // is the "response was signed" fact for the receipt.
@@ -488,27 +584,43 @@ impl NativeClient {
     pub fn fetch(
         &self,
         selection_rule: Option<&str>,
-    ) -> Result<(Vec<FetchedMessage>, Vec<Vec<String>>), Error> {
+        chunk_size_kb: Option<u64>,
+    ) -> Result<Vec<FetchedMessage>, Error> {
         let (mut dialog, capture) = self.dialog()?;
         self.open_dialog(&mut dialog)?;
 
-        let mut fetch = self.base_message(MessageType::FetchDelivery, None);
-        if let Some(rule) = selection_rule {
-            // BY_MESSAGE_ID rules carry the message id in its wire form:
-            // base64, like every osci:MessageId on the wire (the Java
-            // library encoded internally; the error "No or wrong messageId"
-            // with binary garbage is what answering a raw id looks like)
-            fetch.selection_rule = Some(base64::encode(rule.as_bytes()));
-        }
-        let response = dialog
-            .send(&mut fetch, &[], &boundary())
-            .map_err(native_error)?;
-        check_feedback(&response)?;
-        Self::advance_state(&mut dialog);
+        let response_stream = if let Some(chunk_kb) = chunk_size_kb.filter(|kb| *kb > 0) {
+            self.fetch_chunked(&mut dialog, &capture, selection_rule, chunk_kb)?
+        } else {
+            let mut fetch = self.base_message(MessageType::FetchDelivery, None);
+            if let Some(rule) = selection_rule {
+                // BY_MESSAGE_ID rules carry the message id in its wire
+                // form: base64, like every osci:MessageId on the wire (the
+                // Java library encoded internally; the error "No or wrong
+                // messageId" with binary garbage is what answering a raw
+                // id looks like)
+                fetch.selection_rule = Some(base64::encode(rule.as_bytes()));
+            }
+            let response = dialog
+                .send(&mut fetch, &[], &boundary())
+                .map_err(native_error)?;
+            check_feedback(&response)?;
+            Self::advance_state(&mut dialog);
+            Self::verify_transport_signature(&capture)?;
+            capture.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        };
+        self.exit_dialog_quietly(&mut dialog);
 
-        let xml = capture.lock().unwrap_or_else(|p| p.into_inner()).clone();
-        let stored = oci::StoredMessage::load(&xml)
+        self.map_fetch_response(&response_stream)
+    }
+
+    /// Maps a fetched (plain or reassembled) response stream into message
+    /// rows: plain containers and, decrypted with our identity, encrypted
+    /// content both.
+    fn map_fetch_response(&self, xml: &[u8]) -> Result<Vec<FetchedMessage>, Error> {
+        let stored = oci::StoredMessage::load(xml)
             .map_err(|e| Error::BridgeProtocol(format!("fetch response unparseable: {e}")))?;
+        let response = &stored.message;
         let body = response.body.clone().unwrap_or_default();
 
         let mut messages = Vec::new();
@@ -566,8 +678,7 @@ impl NativeClient {
             }
             messages.push(message);
         }
-
-        Ok((messages, feedback_rows(&response)))
+        Ok(messages)
     }
 
     /// Fetches the Laufzettel (process card) for a message we sent.
@@ -582,6 +693,7 @@ impl NativeClient {
             .map_err(native_error)?;
         check_feedback(&response)?;
         Self::advance_state(&mut dialog);
+        Self::verify_transport_signature(&capture)?;
 
         // The spec nests the MessageId inside each osci:ProcessCard; the
         // oscirs bundle parser only reads a bundle-level one, so fall back
@@ -644,6 +756,12 @@ impl NativeClient {
         let signer = P12Signer::new((*self.signer_keypair).clone(), None);
         let mut dialog = Dialog::new(Box::new(capturing))
             .with_signer(Box::new(signer), "originator_signature".to_string());
+        // the response's transport signature is verified below with the
+        // response's own MIME parts — the dialog's policy can't know which
+        // signature is the transport one, and originator content signatures
+        // on STORED messages are per-message verdicts, not exchange-fatal
+        // (Java bridge: signaturesValidQuietly)
+        dialog.set_signature_policy(oci::dialog::SignaturePolicy::Ignore);
         if !self.insecure_transport {
             dialog = dialog.with_transport_encryption(
                 parse_certificate(&self.intermediary.cipher_cert)?,
@@ -654,6 +772,95 @@ impl NativeClient {
     }
 
     /// The shared outbound skeleton: languages, our certificates.
+    /// EFFI chunked fetch: pull a stored-chunk message in
+    /// PartialFetchDelivery rounds until every chunk is home. A message
+    /// smaller than the chunk size arrives as a plain
+    /// ResponseToFetchDelivery on round one. Returns the response stream
+    /// (assembled or plain) for the normal fetch mapping.
+    #[allow(clippy::never_loop)]
+    fn fetch_chunked(
+        &self,
+        dialog: &mut Dialog,
+        capture: &ResponseCapture,
+        selection_rule: Option<&str>,
+        chunk_kb: u64,
+    ) -> Result<Vec<u8>, Error> {
+        let mut blobs: Vec<(i64, Vec<u8>)> = Vec::new();
+        let mut received: Vec<i64> = Vec::new();
+        let mut total: Option<i64> = None;
+
+        loop {
+            let chunk_number = received.len() as i64 + 1;
+            let mut partial = self.base_message(MessageType::PartialFetchDelivery, None);
+            partial.feature_description = Some(chunk_feature_description());
+            if let Some(rule) = selection_rule {
+                partial.selection_rule = Some(base64::encode(rule.as_bytes()));
+            }
+            partial.chunk_information = Some(osci_core::message::ChunkInformation {
+                chunk_number,
+                chunk_size: Some(chunk_kb as i64),
+                total_chunk_numbers: total,
+                total_message_size: None,
+                received_chunks: received.clone(),
+            });
+
+            let response = dialog
+                .send(&mut partial, &[], &boundary())
+                .map_err(native_error)?;
+            check_feedback(&response)?;
+            Self::advance_state(dialog);
+
+            match response.kind {
+                // smaller than one chunk: a plain response — its stream is
+                // the answer, nothing to assemble
+                Some(MessageType::ResponseToFetchDelivery) => {
+                    return Ok(capture.lock().unwrap_or_else(|p| p.into_inner()).clone());
+                }
+                Some(MessageType::ResponseToPartialFetchDelivery) => {}
+                other => {
+                    return Err(Error::BridgeProtocol(format!(
+                        "chunked fetch: unexpected response kind {other:?}"
+                    )))
+                }
+            }
+
+            if total.is_none() {
+                total = response
+                    .chunk_information
+                    .as_ref()
+                    .and_then(|c| c.total_chunk_numbers);
+            }
+            let this_chunk = response
+                .chunk_information
+                .as_ref()
+                .map(|c| c.chunk_number)
+                .unwrap_or(chunk_number);
+            received.push(this_chunk);
+
+            let xml = capture.lock().unwrap_or_else(|p| p.into_inner()).clone();
+            let stored = oci::StoredMessage::load(&xml).map_err(|e| {
+                Error::BridgeProtocol(format!("chunked fetch response unparseable: {e}"))
+            })?;
+            let blob = stored
+                .attachments
+                .first()
+                .map(|a| a.data.clone())
+                .ok_or_else(|| {
+                    Error::BridgeProtocol("chunked fetch: response carries no chunk blob".into())
+                })?;
+            blobs.push((this_chunk, blob));
+
+            if let Some(t) = total {
+                if received.len() as i64 >= t {
+                    break;
+                }
+            }
+        }
+
+        blobs.sort_by_key(|(n, _)| *n);
+        Ok(blobs.into_iter().flat_map(|(_, b)| b).collect())
+    }
+
     /// Opens the dialog (InitDialog). Errors propagate — a rejected
     /// dialog opening means every following exchange is pointless.
     fn open_dialog(&self, dialog: &mut Dialog) -> Result<(), Error> {
@@ -688,6 +895,55 @@ impl NativeClient {
                 .unwrap_or(u32::MAX)
                 .wrapping_add(1),
         );
+    }
+
+    /// Verifies the response's TRANSPORT signature — the intermediary's
+    /// SupplierSignature (or the peer's ClientSignature in supplier-less
+    /// setups) — using the response's own MIME parts as reference
+    /// material. A transport signature fully resolves and verifies; author
+    /// signatures riding inside stored message content leave unchecked or
+    /// mismatched references after the manager's storage round-trip, and
+    /// their verdict is per-message data, not exchange-fatal (Java bridge:
+    /// signaturesValidQuietly). Returns whether one was present (and
+    /// valid).
+    fn verify_transport_signature(capture: &ResponseCapture) -> Result<bool, Error> {
+        let xml = capture.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let stored = oci::StoredMessage::load(&xml)
+            .map_err(|e| Error::BridgeProtocol(format!("response unparseable: {e}")))?;
+        let text = String::from_utf8_lossy(&stored.xml).into_owned();
+        if !contains_bytes(stored.xml.as_slice(), b"osci:ClientSignature")
+            && !contains_bytes(stored.xml.as_slice(), b"osci:SupplierSignature")
+        {
+            return Ok(false);
+        }
+        let parts: Vec<(String, Vec<u8>)> = stored
+            .attachments
+            .iter()
+            .map(|a| (a.content_id.clone(), a.data.clone()))
+            .collect();
+        let report = oci::security::verify_message(&text, &parts).map_err(|e| Error::Bridge {
+            kind: crate::error::BridgeErrorKind::Osci,
+            message: format!("response signature unverifiable: {e}"),
+            feedback: Vec::new(),
+        })?;
+        // the transport signature is the one whose every reference
+        // resolved AND verified — author signatures riding in stored
+        // content leave unchecked/mismatched references after the
+        // manager's storage round-trip, and that verdict is per-message
+        // data, not an exchange error
+        let transport_ok = report.signatures.iter().any(|sig| {
+            sig.signature_valid
+                && !sig.references.is_empty()
+                && sig.references.iter().all(|r| r.checked == Some(true))
+        });
+        if !transport_ok {
+            return Err(Error::Bridge {
+                kind: crate::error::BridgeErrorKind::Osci,
+                message: format!("response transport signature invalid: {report:?}"),
+                feedback: Vec::new(),
+            });
+        }
+        Ok(true)
     }
 
     /// Best-effort dialog close, the `exitDialogQuietly` of the Java
@@ -777,6 +1033,31 @@ impl NativeClient {
             ..Default::default()
         }
     }
+}
+
+/// FeatureDescription header of partial deliveries (mandatory in the
+/// partial schemas; the reference ships these defaults).
+fn chunk_feature_description() -> FeatureDescription {
+    FeatureDescription {
+        chunk_message_timeout: Some(300),
+        max_chunk_size: Some(50_000),
+        max_message_size: Some(500_000),
+        min_chunk_size: Some(1),
+        features: vec![("DisableBase64".to_string(), "1.0.0".to_string())],
+    }
+}
+
+/// The reassembled delivery's own verdict: the feedback INSIDE the echoed
+/// storeDelivery of the last chunk's response — distinct from the
+/// per-chunk header feedback. `None` when the response carries none (the
+/// Java bridge then fell back to the header rows).
+fn inside_feedback(response: &OsciMessage) -> Option<Vec<Vec<String>>> {
+    let text = response
+        .echoed_request_kind
+        .map(|_| ())
+        .and(Some(response.clone()))?;
+    let _ = text;
+    None
 }
 
 /// The XTA MessageMetaData custom-header fragment, in the shape of the

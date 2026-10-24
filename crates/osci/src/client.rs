@@ -89,18 +89,11 @@ impl OsciClient {
         query: FetchQuery,
         chunk_size_kb: Option<u64>,
     ) -> Result<Vec<FetchedMessage>, Error> {
-        if chunk_size_kb.is_some() {
-            return Err(Error::Config(
-                "EFFI chunked fetch is not supported by the native stack yet".into(),
-            ));
-        }
-        let (mode, rule) = match &query {
-            FetchQuery::ByMessageId(id) => ("BY_MESSAGE_ID", Some(id.clone())),
-            FetchQuery::All => ("ALL", None),
+        let rule = match &query {
+            FetchQuery::ByMessageId(id) => Some(id.clone()),
+            FetchQuery::All => None,
         };
-        let (messages, _feedback) = self.native.fetch(rule.as_deref())?;
-        let _ = mode;
-        Ok(messages)
+        self.native.fetch(rule.as_deref(), chunk_size_kb)
     }
 
     /// Fetches the Laufzettel (process card) for a message we sent.
@@ -312,8 +305,10 @@ impl SendBuilder<'_> {
         self
     }
 
-    /// Sends via EFFI chunked transfer with this many KB per chunk.
-    /// Not yet supported by the native stack; the error names it.
+    /// Sends via EFFI chunked transfer with this many KB per chunk
+    /// (spec „Effiziente Übertragung großer Datenmengen"). The fully
+    /// composed+signed delivery is split and shipped as a
+    /// PartialStoreDelivery sequence.
     pub fn chunk_size_kb(mut self, kb: u64) -> Self {
         self.chunk_size_kb = Some(kb);
         self
@@ -353,11 +348,6 @@ impl SendBuilder<'_> {
 
     /// Sends the message and returns the intermediary's receipt.
     pub fn submit(self) -> Result<Receipt, Error> {
-        if self.chunk_size_kb.is_some() {
-            return Err(Error::Config(
-                "EFFI chunked send is not supported by the native stack yet".into(),
-            ));
-        }
         let recipient = self.recipient.ok_or_else(|| {
             Error::Config("recipient (cipher certificate or DVDV entry) is required".into())
         })?;
@@ -365,6 +355,7 @@ impl SendBuilder<'_> {
         self.client.native.send_xta(crate::native::SendRequest {
             xta: &self.xta,
             attachments: &self.attachments,
+            chunk_size_kb: self.chunk_size_kb,
             recipient_cipher_cert: &recipient.cipher_cert,
             subject: self.subject.as_deref(),
             metadata_author: self.metadata_author.as_deref(),

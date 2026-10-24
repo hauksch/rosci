@@ -305,6 +305,7 @@ fn native_send_roundtrip_with_full_crypto() {
         .send_xta(osci::native::SendRequest {
             xta: &Xta::from_bytes("meldung.xta", b"XTA-Daten".to_vec()),
             attachments: &[],
+            chunk_size_kb: None,
             recipient_cipher_cert: &signer_cert,
             subject: Some("XMeld Anzeige"),
             metadata_author: None,
@@ -316,7 +317,7 @@ fn native_send_roundtrip_with_full_crypto() {
     assert_eq!(receipt.message_id, "msg-4711");
     assert!(receipt.feedback.unwrap()[0][1].starts_with('0'));
 
-    let (fetched, _feedback) = client.fetch(None).unwrap();
+    let fetched = client.fetch(None, None).unwrap();
     assert_eq!(fetched.len(), 1);
     let encrypted = fetched[0].encrypted_contents.as_ref().expect("decrypted");
     // FetchedContent.data is base64 by protocol contract
