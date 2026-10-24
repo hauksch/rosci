@@ -169,6 +169,7 @@ fn handle(body: &[u8], decrypter: &osci::p12::P12Decrypter, client_cert_pem: &st
         MessageType::InitDialog => (MessageType::ResponseToInitDialog, "0800"),
         MessageType::FetchDelivery => (MessageType::ResponseToFetchDelivery, "0801"),
         MessageType::FetchProcessCard => (MessageType::ResponseToFetchProcessCard, "0801"),
+        MessageType::ExitDialog => (MessageType::ResponseToExitDialog, "0800"),
         other => panic!("mock intermediary cannot handle {other:?}"),
     };
 
@@ -183,7 +184,7 @@ fn handle(body: &[u8], decrypter: &osci::p12::P12Decrypter, client_cert_pem: &st
             // ResponseToInitDialog/ExitDialog prohibit the sequence
             // attribute (it starts with the first "real" exchange)
             sequence_number: match response_kind {
-                MessageType::ResponseToInitDialog | MessageType::ResponseToExitDialog => None,
+                MessageType::ResponseToInitDialog => None,
                 _ => request_block.sequence_number.or(Some(0)),
             },
             response: request_block.challenge,

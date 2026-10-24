@@ -97,12 +97,23 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// return value does not carry), and peel transport-encrypted response
 /// envelopes — in secure mode the intermediary encrypts its response back
 /// to our cipher certificate, and the dialog machinery expects a plain
-/// signed stream.
+/// signed stream. SOAP faults are surfaced separately: a fault envelope
+/// carries no SOAP header, so the dialog parser would reject it before
+/// the rejection's OSCI code could be classified.
 struct CapturingTransport {
     inner: HttpTransport,
     last_response: Arc<Mutex<Vec<u8>>>,
     /// Our decrypters, for unwrapping response envelopes.
     decrypters: Vec<Arc<P12Decrypter>>,
+}
+
+/// A structured intermediary rejection (`soap:Fault` with an `osci:Code`).
+#[derive(Debug, Clone)]
+pub struct SoapFault {
+    /// The OSCI rejection code (e.g. `9400`).
+    pub code: String,
+    /// The fault text (`faultstring`).
+    pub text: String,
 }
 
 impl CapturingTransport {
@@ -112,11 +123,45 @@ impl CapturingTransport {
     fn is_transport_envelope(xml: &[u8]) -> bool {
         !contains_bytes(xml, b"<soap:Header") && contains_bytes(xml, b"xenc:EncryptedData")
     }
+
+    fn extract_fault(xml: &[u8]) -> Option<SoapFault> {
+        if !contains_bytes(xml, b"<soap:Fault") {
+            return None;
+        }
+        let text = |open: &[u8], close: &[u8]| -> Option<String> {
+            let start = find_bytes(xml, open)? + open.len();
+            let rest = &xml[start..];
+            let end = find_bytes(rest, close)?;
+            Some(String::from_utf8_lossy(&rest[..end]).into_owned())
+        };
+        Some(SoapFault {
+            code: text(b"<osci:Code>", b"</osci:Code>").unwrap_or_else(|| "9400".to_string()),
+            text: text(b"<faultstring>", b"</faultstring>")
+                .unwrap_or_else(|| "intermediary rejected the request".to_string()),
+        })
+    }
 }
 
 impl Transport for CapturingTransport {
     fn send(&self, message: &[u8]) -> Result<Vec<u8>, TransportError> {
         let response = self.inner.send(message)?;
+        if std::env::var_os("ROSCI_DEBUG").is_some() {
+            eprintln!(
+                "ROSCI_DEBUG: response status ok, {} bytes:\n{}",
+                response.len(),
+                String::from_utf8_lossy(&response)
+            );
+        }
+
+        if let Some(fault) = Self::extract_fault(&response) {
+            *self.last_response.lock().unwrap_or_else(|p| p.into_inner()) = response;
+            // the marker rides the error message; the dialog layer turns
+            // it into the typed OSCI error
+            return Err(TransportError::new(format!(
+                "soap-fault {} {}",
+                fault.code, fault.text
+            )));
+        }
 
         let plain = if Self::is_transport_envelope(&response) {
             let stored = oci::StoredMessage::load(&response)
@@ -136,6 +181,15 @@ impl Transport for CapturingTransport {
             response.clone()
         };
 
+        if std::env::var_os("ROSCI_DEBUG").is_some() {
+            let text = String::from_utf8_lossy(&plain);
+            if let Some(start) = text.find("<osci:ControlBlock") {
+                eprintln!(
+                    "ROSCI_DEBUG: peeled control block: {}",
+                    &text[start..(start + 300).min(text.len())]
+                );
+            }
+        }
         *self
             .last_response
             .lock()
@@ -245,6 +299,11 @@ impl NativeClient {
         } = request;
         let (mut dialog, capture) = self.dialog()?;
 
+        // Round 0: open the dialog. Only InitDialog may start one — the
+        // live intermediary rejects a GetMessageId with a sequence number
+        // but no dialog (9400), which the local mock tolerated.
+        self.open_dialog(&mut dialog)?;
+
         // Round 1: reserve a message id — the intermediary hands them out
         // like queue numbers at the Amt, and nobody may skip the line.
         let mut get_id = self.base_message(MessageType::GetMessageId, None);
@@ -252,6 +311,7 @@ impl NativeClient {
             .send(&mut get_id, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&rsp)?;
+        Self::advance_state(&mut dialog);
         // The id rides in the response entry; oscirs only fills
         // `request` from a nested echoed request element, which real
         // ResponseToGetMessageId messages do not carry (the Java
@@ -399,6 +459,7 @@ impl NativeClient {
                 .map_err(native_error)?
         };
         check_feedback(&response)?;
+        Self::advance_state(&mut dialog);
         // oscirs's dialog verifies the response signature by policy
         // (VerifyIfPresent) and errors on tampering; the report's presence
         // is the "response was signed" fact for the receipt.
@@ -413,6 +474,7 @@ impl NativeClient {
             .map(decode_message_id)
             .unwrap_or(message_id);
 
+        self.exit_dialog_quietly(&mut dialog);
         Ok(Receipt {
             message_id,
             response_signed: Some(signed),
@@ -428,19 +490,21 @@ impl NativeClient {
         selection_rule: Option<&str>,
     ) -> Result<(Vec<FetchedMessage>, Vec<Vec<String>>), Error> {
         let (mut dialog, capture) = self.dialog()?;
-        let mut init = self.base_message(MessageType::InitDialog, None);
-        dialog
-            .send(&mut init, &[], &boundary())
-            .map_err(native_error)?;
+        self.open_dialog(&mut dialog)?;
 
         let mut fetch = self.base_message(MessageType::FetchDelivery, None);
         if let Some(rule) = selection_rule {
-            fetch.selection_rule = Some(rule.to_string());
+            // BY_MESSAGE_ID rules carry the message id in its wire form:
+            // base64, like every osci:MessageId on the wire (the Java
+            // library encoded internally; the error "No or wrong messageId"
+            // with binary garbage is what answering a raw id looks like)
+            fetch.selection_rule = Some(base64::encode(rule.as_bytes()));
         }
         let response = dialog
             .send(&mut fetch, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&response)?;
+        Self::advance_state(&mut dialog);
 
         let xml = capture.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let stored = oci::StoredMessage::load(&xml)
@@ -459,20 +523,41 @@ impl NativeClient {
             match decrypt_encrypted_data(&xml_text, 0, &[&decrypter]) {
                 Ok(content) => {
                     message.signatures_valid = Some(verify_quietly(&content.plaintext));
-                    // The plaintext is either a ContentContainer XML (the
-                    // Java dialect — extract its content rows) or the
-                    // sealed payload itself (mock/test dialect — one row).
-                    let rows = container_contents(&content.plaintext);
-                    message.encrypted_contents = Some(if rows.is_empty() {
-                        vec![FetchedContent {
+                    // The plaintext is a ContentContainer XML: inline
+                    // Base64Content rows plus, in the Java
+                    // EncryptedDataOSCI dialect, cid:-referenced
+                    // attachments sealed with their own MgmtData session
+                    // keys — those decrypt against the response's MIME
+                    // parts. A payload-shaped plaintext (no container) is
+                    // the test-dialect fallback: one row.
+                    let mut rows = container_contents(&content.plaintext);
+                    let container_text = String::from_utf8_lossy(&content.plaintext).into_owned();
+                    let part_map: Vec<(String, Vec<u8>)> = stored
+                        .attachments
+                        .iter()
+                        .map(|a| (a.content_id.clone(), a.data.clone()))
+                        .collect();
+                    if let Ok(decrypted) =
+                        oci::security::decrypt_attachments(&container_text, &part_map)
+                    {
+                        for da in decrypted {
+                            rows.push(FetchedContent {
+                                filename: Some(da.ref_id),
+                                content_type: None,
+                                data: normalize_base64(&base64::encode(&da.plaintext)),
+                                container: Some("encrypted".into()),
+                            });
+                        }
+                    }
+                    if rows.is_empty() {
+                        rows.push(FetchedContent {
                             filename: None,
                             content_type: None,
                             data: normalize_base64(&base64::encode(&content.plaintext)),
                             container: Some("encrypted".into()),
-                        }]
-                    } else {
-                        rows
-                    });
+                        });
+                    }
+                    message.encrypted_contents = Some(rows);
                 }
                 Err(e) => {
                     message.subject =
@@ -488,10 +573,7 @@ impl NativeClient {
     /// Fetches the Laufzettel (process card) for a message we sent.
     pub fn process_card(&self, message_id: &str) -> Result<Vec<ProcessCard>, Error> {
         let (mut dialog, capture) = self.dialog()?;
-        let mut init = self.base_message(MessageType::InitDialog, None);
-        dialog
-            .send(&mut init, &[], &boundary())
-            .map_err(native_error)?;
+        self.open_dialog(&mut dialog)?;
 
         let mut card = self.base_message(MessageType::FetchProcessCard, None);
         card.selection_rule = Some(message_id.to_string());
@@ -499,6 +581,7 @@ impl NativeClient {
             .send(&mut card, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&response)?;
+        Self::advance_state(&mut dialog);
 
         // The spec nests the MessageId inside each osci:ProcessCard; the
         // oscirs bundle parser only reads a bundle-level one, so fall back
@@ -571,6 +654,50 @@ impl NativeClient {
     }
 
     /// The shared outbound skeleton: languages, our certificates.
+    /// Opens the dialog (InitDialog). Errors propagate — a rejected
+    /// dialog opening means every following exchange is pointless.
+    fn open_dialog(&self, dialog: &mut Dialog) -> Result<(), Error> {
+        let mut init = self.base_message(MessageType::InitDialog, None);
+        dialog
+            .send(&mut init, &[], &boundary())
+            .map_err(native_error)?;
+        Self::advance_state(dialog);
+        Ok(())
+    }
+
+    /// Advances the dialog state to what the NEXT outgoing message must
+    /// carry. Two corrections to oscirs's echo-model, both per the
+    /// reference library's DialogHandler:
+    ///
+    /// 1. the outbound `Response` element must answer the peer's NEWEST
+    ///    challenge (the adopted state keeps the peer's answer to our
+    ///    previous one — real intermediaries verify and reject with 9400);
+    /// 2. the sequence counter increments per outgoing message
+    ///    (`setSequenceNumber(cb.getSequenceNumber() + 1)`), where a
+    ///    response without the attribute resets the counter to the -1
+    ///    sentinel (next message sends 0).
+    fn advance_state(dialog: &mut Dialog) {
+        let challenge = dialog.control_block.challenge.clone();
+        dialog.control_block.response = challenge;
+        // u32 in the control-block model; the reference's -1 sentinel maps
+        // to "start counting at zero" (wrapping add, no panic)
+        dialog.control_block.sequence_number = Some(
+            dialog
+                .control_block
+                .sequence_number
+                .unwrap_or(u32::MAX)
+                .wrapping_add(1),
+        );
+    }
+
+    /// Best-effort dialog close, the `exitDialogQuietly` of the Java
+    /// bridge: a failed operation must not leave dialog state at the
+    /// intermediary while this process lives on. Errors are swallowed.
+    fn exit_dialog_quietly(&self, dialog: &mut Dialog) {
+        let mut exit = self.base_message(MessageType::ExitDialog, None);
+        let _ = dialog.send(&mut exit, &[], &boundary());
+    }
+
     /// The shared outbound skeleton: languages plus the certificate set
     /// the schema allows for this kind — dialog-lifecycle and fetch types
     /// carry only the originator cipher certificate, store deliveries add
@@ -824,6 +951,18 @@ fn native_error(e: oci::dialog::DialogError) -> Error {
             format!("intermediary rejected the request: {code} {text}"),
             vec![vec![text.clone(), code.clone()]],
         ),
+        // structured rejections ride a soap:Fault (no SOAP header — the
+        // dialog parser rejects it before feedback classification); the
+        // transport wrapper flags them with the marker below
+        oci::dialog::DialogError::Transport(t) if t.starts_with("soap-fault ") => {
+            let rest = &t["soap-fault ".len()..];
+            let (code, text) = rest.split_once(' ').unwrap_or((rest, rest));
+            (
+                crate::error::BridgeErrorKind::Osci,
+                format!("intermediary rejected the request: {code} {text}"),
+                vec![vec![text.to_string(), code.to_string()]],
+            )
+        }
         oci::dialog::DialogError::Transport(_) => (
             crate::error::BridgeErrorKind::Transport,
             e.to_string(),
