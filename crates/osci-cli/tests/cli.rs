@@ -175,12 +175,21 @@ fn handle(body: &[u8], decrypter: &osci::p12::P12Decrypter, client_cert_pem: &st
     let mut out = OutMessage {
         kind: Some(response_kind),
         control_block: ControlBlock {
-            conversation_id: request_block.conversation_id,
-            sequence_number: request_block.sequence_number.or(Some(0)),
+            // a real intermediary mints the ConversationId on the first
+            // response; the request has none yet
+            conversation_id: request_block
+                .conversation_id
+                .or_else(|| Some("4711".to_string())),
+            // ResponseToInitDialog/ExitDialog prohibit the sequence
+            // attribute (it starts with the first "real" exchange)
+            sequence_number: match response_kind {
+                MessageType::ResponseToInitDialog | MessageType::ResponseToExitDialog => None,
+                _ => request_block.sequence_number.or(Some(0)),
+            },
             response: request_block.challenge,
             challenge: Some(base64::encode(b"next-challenge")),
         },
-        desired_languages: Some("de".into()),
+        desired_languages: (!response_kind.is_response()).then(|| "de".to_string()),
         feedback: vec![OutFeedback {
             language: Some("de".into()),
             code: code.into(),
@@ -200,6 +209,7 @@ fn handle(body: &[u8], decrypter: &osci::p12::P12Decrypter, client_cert_pem: &st
             let client_cert = pem_certificate(client_cert_pem);
             let container = OutContentContainer {
                 id: "contentcontainer".into(),
+                encrypted_attachments: Vec::new(),
                 contents: vec![OutContent {
                     id: "content1".into(),
                     // raw text — the composer base64-encodes once
@@ -224,6 +234,7 @@ fn handle(body: &[u8], decrypter: &osci::p12::P12Decrypter, client_cert_pem: &st
         MessageType::FetchProcessCard => {
             out.process_card_bundles = vec![OutProcessCardBundle {
                 message_id: Some("fake-msg-42".into()),
+                inspections: Vec::new(),
                 process_cards: vec![OutProcessCard {
                     creation: Some(
                         chrono::DateTime::parse_from_rfc3339("2026-09-29T10:00:00Z")

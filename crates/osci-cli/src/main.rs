@@ -8,7 +8,6 @@ use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use base64::Engine as _;
 use clap::{Args, Parser, Subcommand};
 use osci::dvdv::{DvdvDirectory, FileDvdv};
 use osci::{Error, FetchQuery, Identity, Intermediary, OsciClient, Recipient, Xta};
@@ -497,7 +496,6 @@ fn cmd_fetch(args: FetchArgs) -> Result<(), Error> {
         return Ok(());
     }
 
-    let engine = base64::engine::general_purpose::STANDARD;
     let out_dir = args.out.unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| Error::Config(format!("cannot create {}: {e}", out_dir.display())))?;
@@ -517,8 +515,7 @@ fn cmd_fetch(args: FetchArgs) -> Result<(), Error> {
                     .filename
                     .clone()
                     .unwrap_or_else(|| format!("content-{wrote}.bin"));
-                let bytes = engine
-                    .decode(&content.data)
+                let bytes = decode_mime_base64(&content.data)
                     .map_err(|e| Error::BridgeProtocol(format!("bridge sent bad base64: {e}")))?;
                 let path = write_fetched_file(&out_dir, &name, &bytes)?;
                 println!("  wrote {} ({} bytes)", path.display(), bytes.len());
@@ -668,6 +665,15 @@ fn sanitize_filename(name: &str) -> String {
 /// that includes a pre-planted symlink — `create_new` refuses those too)
 /// gets a numbered sibling instead. The intermediary chooses the filename;
 /// it does not get to clobber your `.bashrc` with it.
+/// Base64 from the wire may be MIME-wrapped (76-char lines) — the
+/// intermediary writes what the spec's writer writes; strip whitespace
+/// before the strict engine.
+fn decode_mime_base64(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    use base64::Engine as _;
+    let clean: String = data.chars().filter(|c| !c.is_whitespace()).collect();
+    base64::engine::general_purpose::STANDARD.decode(clean.as_bytes())
+}
+
 fn write_fetched_file(
     out_dir: &std::path::Path,
     name: &str,

@@ -182,12 +182,21 @@ fn handle(
     let mut out = OutMessage {
         kind: Some(response_kind),
         control_block: ControlBlock {
-            conversation_id: request_block.conversation_id,
-            sequence_number: request_block.sequence_number.or(Some(0)),
+            // a real intermediary mints the ConversationId on the first
+            // response; the request has none yet
+            conversation_id: request_block
+                .conversation_id
+                .or_else(|| Some("4711".to_string())),
+            // ResponseToInitDialog/ExitDialog prohibit the sequence
+            // attribute (it starts with the first "real" exchange)
+            sequence_number: match response_kind {
+                MessageType::ResponseToInitDialog | MessageType::ResponseToExitDialog => None,
+                _ => request_block.sequence_number.or(Some(0)),
+            },
             response: request_block.challenge,
             challenge: Some(base64::encode(b"next-challenge")),
         },
-        desired_languages: Some("de".into()),
+        desired_languages: (!response_kind.is_response()).then(|| "de".to_string()),
         feedback: vec![OutFeedback {
             language: Some("de".into()),
             code: code.into(),
@@ -200,6 +209,7 @@ fn handle(
         let client_cert = pem_certificate(client_cert_pem);
         let container = osci_core::message::compose::OutContentContainer {
             id: "contentcontainer".into(),
+            encrypted_attachments: Vec::new(),
             contents: vec![osci_core::message::compose::OutContent {
                 id: "content1".into(),
                 // raw text — the composer base64-encodes once on the wire
@@ -291,14 +301,16 @@ fn native_send_roundtrip_with_full_crypto() {
     .unwrap();
 
     let receipt = client
-        .send_xta(
-            &Xta::from_bytes("meldung.xta", b"XTA-Daten".to_vec()),
-            &[],
-            &signer_cert,
-            Some("XMeld Anzeige"),
-            true,
-            true,
-        )
+        .send_xta(osci::native::SendRequest {
+            xta: &Xta::from_bytes("meldung.xta", b"XTA-Daten".to_vec()),
+            attachments: &[],
+            recipient_cipher_cert: &signer_cert,
+            subject: Some("XMeld Anzeige"),
+            metadata_author: None,
+            metadata_reader: None,
+            sign: true,
+            encrypt: true,
+        })
         .unwrap();
     assert_eq!(receipt.message_id, "msg-4711");
     assert!(receipt.feedback.unwrap()[0][1].starts_with('0'));

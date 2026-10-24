@@ -15,7 +15,9 @@
 use std::sync::{Arc, Mutex};
 
 use osci_core::helper::base64;
-use osci_core::message::compose::{OutCertEntry, OutContent, OutContentContainer, OutMessage};
+use osci_core::message::compose::{
+    OutAttachment, OutCertEntry, OutContent, OutContentContainer, OutMessage,
+};
 use osci_core::message::{MessageType, OsciMessage};
 use osci_core::soap::{CertRole, CertUse};
 use osci_transport::http::{HttpTransport, HttpTransportConfig};
@@ -71,6 +73,12 @@ fn xml_escape(text: &str) -> String {
 /// Handle on the last raw transport response.
 type ResponseCapture = Arc<Mutex<Vec<u8>>>;
 
+/// Normalizes wire base64 (the writer emits MIME-wrapped 76-char lines)
+/// into the standard single-line form the DTO contract promises.
+fn normalize_base64(data: &str) -> String {
+    data.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
 /// Substring search that keeps needle lengths honest (two wire-shape bugs
 /// here were exactly off-by-needle-length window searches).
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -112,7 +120,7 @@ impl Transport for CapturingTransport {
 
         let plain = if Self::is_transport_envelope(&response) {
             let stored = oci::StoredMessage::load(&response)
-                .map_err(|e| TransportError(format!("transport envelope unparseable: {e}")))?;
+                .map_err(|e| TransportError::new(format!("transport envelope unparseable: {e}")))?;
             let like = oci::security::StoredMessageLike {
                 xml: &stored.xml,
                 attachments: &stored.attachments,
@@ -123,7 +131,7 @@ impl Transport for CapturingTransport {
                 .map(|arc| &**arc as &dyn oci::Decrypter)
                 .collect();
             oci::security::decrypt_transport_message(&like, &refs)
-                .map_err(|e| TransportError(format!("response transport decryption: {e}")))?
+                .map_err(|e| TransportError::new(format!("response transport decryption: {e}")))?
         } else {
             response.clone()
         };
@@ -134,6 +142,26 @@ impl Transport for CapturingTransport {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = plain.clone();
         Ok(plain)
     }
+}
+
+/// One send operation, fully addressed.
+pub struct SendRequest<'a> {
+    /// The main payload.
+    pub xta: &'a Xta,
+    /// Additional content parts riding in the same Zustellung.
+    pub attachments: &'a [Xta],
+    /// The recipient's cipher certificate (PEM or base64 DER).
+    pub recipient_cipher_cert: &'a str,
+    /// The message subject.
+    pub subject: Option<&'a str>,
+    /// XTA MessageMetaData author identifier (e.g. `ags:NNNNNNNNNNN`).
+    pub metadata_author: Option<&'a str>,
+    /// XTA MessageMetaData reader identifier.
+    pub metadata_reader: Option<&'a str>,
+    /// Content signing flag (transport signatures always ride).
+    pub sign: bool,
+    /// Content encryption flag.
+    pub encrypt: bool,
 }
 
 /// A ready-to-use native OSCI client.
@@ -192,23 +220,29 @@ impl NativeClient {
                 crate::protocol::PROTOCOL_VERSION.to_string(),
             ),
             ("bridge".to_string(), env!("CARGO_PKG_VERSION").to_string()),
-            ("library".to_string(), "oscirs 3fb9258 (native)".to_string()),
+            ("library".to_string(), "oscirs 9fa178f (native)".to_string()),
             ("provider".to_string(), "RustCrypto".to_string()),
         ])
     }
 
     /// Sends an XTA payload (plus optional additional parts) as a
-    /// StoreDelivery and returns the intermediary's receipt.
-    pub fn send_xta(
-        &self,
-        xta: &Xta,
-        attachments: &[Xta],
-        recipient_cipher_cert: &str,
-        subject: Option<&str>,
-        _sign: bool,
-        encrypt: bool,
-    ) -> Result<Receipt, Error> {
-        let recipient = parse_certificate(recipient_cipher_cert)?;
+    /// StoreDelivery and returns the intermediary's receipt. Binary
+    /// payloads ride as MIME attachments (the Java bridge's shape); with
+    /// `encrypt`, each attachment is session-key encrypted into the
+    /// container (per-attachment key via MgmtData) before the container
+    /// itself is encrypted.
+    pub fn send_xta(&self, request: SendRequest<'_>) -> Result<Receipt, Error> {
+        let recipient = parse_certificate(request.recipient_cipher_cert)?;
+        let SendRequest {
+            xta,
+            attachments,
+            recipient_cipher_cert: _,
+            subject,
+            metadata_author,
+            metadata_reader,
+            sign: _sign,
+            encrypt,
+        } = request;
         let (mut dialog, capture) = self.dialog()?;
 
         // Round 1: reserve a message id — the intermediary hands them out
@@ -237,30 +271,108 @@ impl NativeClient {
                 }
                 Error::BridgeProtocol("GetMessageId response carried no id".into())
             })?;
-        let message_id = decode_message_id(reserved);
+        // the wire form stays base64 (MessageIdType is base64 binary);
+        // only the receipt quotes the decoded form
+        let message_id = decode_message_id(reserved.clone());
 
         // Round 2: the store delivery itself.
         let mut store = self.base_message(MessageType::StoreDelivery, Some(&recipient));
         let escaped_subject = subject.map(xml_escape).unwrap_or_default();
         store.entry_inner = Some(format!(
-            "<osci:MessageId>{message_id}</osci:MessageId><osci:Subject>{escaped_subject}</osci:Subject>"
+            "<osci:MessageId>{reserved}</osci:MessageId><osci:Subject>{escaped_subject}</osci:Subject>"
         ));
 
-        // Content + additional parts inline in one container. Inline base64
-        // is exactly what rides inside the encrypted blob, and keeping the
-        // parts in the container keeps them encrypted too.
-        let mut container = OutContentContainer {
-            id: "contentcontainer".to_string(),
-            contents: Vec::new(),
-        };
-        container
-            .contents
-            .push(inline_content("content1", &xta.data)?);
-        for (n, att) in attachments.iter().enumerate() {
-            container
-                .contents
-                .push(inline_content(&format!("attachment-{}", n + 1), &att.data)?);
+        // XTA MessageMetaData (Ergänzung): author/reader identification
+        // plus message id and size. Only attached when at least one
+        // identifier was configured — an empty custom header is ceremony
+        // without content.
+        if metadata_author.is_some() || metadata_reader.is_some() {
+            let total_bytes =
+                xta.data.len() + attachments.iter().map(|a| a.data.len()).sum::<usize>();
+            store
+                .custom_headers
+                .push(osci_core::message::compose::OutCustomHeader {
+                    id: "MessageMetaData".to_string(),
+                    xml: mmd_fragment(metadata_author, metadata_reader, &message_id, total_bytes),
+                });
         }
+
+        // Content + additional parts as MIME attachments (the Java
+        // bridge's shape): every part is referenced by cid:filename. With
+        // encryption, each part is session-key encrypted first
+        // (EncryptedData Attachment<refid> inside the container) and the
+        // MIME part carries the ciphertext.
+        let mut contents = Vec::new();
+        contents.push(OutContent {
+            id: "content1".to_string(),
+            text: None,
+            href: Some(format!("cid:{}", sanitize_content_id(&xta.filename))),
+        });
+        let mut parts: Vec<(String, String, Vec<u8>)> = vec![(
+            sanitize_content_id(&xta.filename),
+            "application/octet-stream".to_string(),
+            xta.data.clone(),
+        )];
+        for att in attachments {
+            let id = sanitize_content_id(&att.filename);
+            contents.push(OutContent {
+                id: format!("content-{}", id),
+                text: None,
+                href: Some(format!("cid:{id}")),
+            });
+            parts.push((id, "application/octet-stream".to_string(), att.data.clone()));
+        }
+
+        let cipher_uri = EncryptConfig::default().content_cipher;
+        let (encrypted_attachments, part_bytes) = if encrypt {
+            let plaintext_parts = parts
+                .iter()
+                .map(|(id, ct, data)| OutAttachment {
+                    content_id: id.clone(),
+                    content_type: ct.clone(),
+                    base64_encoding: false,
+                    data: data.clone(),
+                })
+                .collect::<Vec<_>>();
+            let href_contents = contents.clone();
+            let enc = osci_core::message::compose::encrypt_attachments(
+                &href_contents,
+                &plaintext_parts,
+                &cipher_uri,
+                None,
+            )
+            .map_err(|e| Error::Config(format!("attachment encryption: {e}")))?;
+            let cipher_parts = parts
+                .iter()
+                .enumerate()
+                .map(|(i, (id, ct, _))| (id.clone(), ct.clone(), enc[i].ciphertext.clone()))
+                .collect::<Vec<_>>();
+            (enc, cipher_parts)
+        } else {
+            (Vec::new(), parts.clone())
+        };
+
+        let container = OutContentContainer {
+            id: "contentcontainer".to_string(),
+            contents,
+            encrypted_attachments,
+        };
+
+        // the bytes the transport signature's cid: references digest over
+        // are the part bytes as they ride the wire
+        let sign_attachments: Vec<(String, Vec<u8>)> = part_bytes
+            .iter()
+            .map(|(id, _, data)| (id.clone(), data.clone()))
+            .collect();
+        store.attachments = part_bytes
+            .iter()
+            .map(|(id, ct, data)| OutAttachment {
+                content_id: id.clone(),
+                content_type: ct.clone(),
+                base64_encoding: false,
+                data: data.clone(),
+            })
+            .collect();
 
         let boundary = boundary();
         let response = if encrypt {
@@ -276,18 +388,21 @@ impl NativeClient {
                         recipients: &recipients,
                         config: EncryptConfig::default(),
                     },
-                    &[],
+                    &sign_attachments,
                     &boundary,
                 )
                 .map_err(native_error)?
         } else {
             store.containers.push(container);
             dialog
-                .send(&mut store, &[], &boundary)
+                .send(&mut store, &sign_attachments, &boundary)
                 .map_err(native_error)?
         };
         check_feedback(&response)?;
-        let signed = verify_response_signature(&capture)?;
+        // oscirs's dialog verifies the response signature by policy
+        // (VerifyIfPresent) and errors on tampering; the report's presence
+        // is the "response was signed" fact for the receipt.
+        let signed = dialog.last_response_report().is_some();
 
         // The StoreDelivery response echoes the message id (Java reads the
         // id from the response, not from our reservation).
@@ -326,7 +441,6 @@ impl NativeClient {
             .send(&mut fetch, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&response)?;
-        verify_response_signature(&capture)?;
 
         let xml = capture.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let stored = oci::StoredMessage::load(&xml)
@@ -345,7 +459,20 @@ impl NativeClient {
             match decrypt_encrypted_data(&xml_text, 0, &[&decrypter]) {
                 Ok(content) => {
                     message.signatures_valid = Some(verify_quietly(&content.plaintext));
-                    message.encrypted_contents = Some(container_contents(&content.plaintext));
+                    // The plaintext is either a ContentContainer XML (the
+                    // Java dialect — extract its content rows) or the
+                    // sealed payload itself (mock/test dialect — one row).
+                    let rows = container_contents(&content.plaintext);
+                    message.encrypted_contents = Some(if rows.is_empty() {
+                        vec![FetchedContent {
+                            filename: None,
+                            content_type: None,
+                            data: normalize_base64(&base64::encode(&content.plaintext)),
+                            container: Some("encrypted".into()),
+                        }]
+                    } else {
+                        rows
+                    });
                 }
                 Err(e) => {
                     message.subject =
@@ -372,13 +499,17 @@ impl NativeClient {
             .send(&mut card, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&response)?;
-        verify_response_signature(&capture)?;
 
+        // The spec nests the MessageId inside each osci:ProcessCard; the
+        // oscirs bundle parser only reads a bundle-level one, so fall back
+        // to the raw response (the Laufzettel identifies the message).
+        let raw = capture.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let fallback_id = extract_message_id_raw(&raw);
         let mut cards = Vec::new();
         for bundle in &response.process_card_bundles {
             for pc in &bundle.process_cards {
                 cards.push(ProcessCard {
-                    message_id: bundle.message_id.clone(),
+                    message_id: bundle.message_id.clone().or_else(|| fallback_id.clone()),
                     subject: pc.subject.clone(),
                     creation: pc.creation.as_ref().map(oci::format_iso8601),
                     forwarding: pc.forwarding.as_ref().map(oci::format_iso8601),
@@ -416,7 +547,7 @@ impl NativeClient {
         })
         .map_err(|e| Error::Bridge {
             kind: crate::error::BridgeErrorKind::Transport,
-            message: e.0,
+            message: e.message().to_string(),
             feedback: Vec::new(),
         })?;
         let capture = Arc::new(Mutex::new(Vec::new()));
@@ -440,57 +571,139 @@ impl NativeClient {
     }
 
     /// The shared outbound skeleton: languages, our certificates.
+    /// The shared outbound skeleton: languages plus the certificate set
+    /// the schema allows for this kind — dialog-lifecycle and fetch types
+    /// carry only the originator cipher certificate, store deliveries add
+    /// the originator signature and the addressee's cipher certificate.
     fn base_message(&self, kind: MessageType, addressee: Option<&Certificate>) -> OutMessage {
-        let mut entries = vec![
-            cert_entry(
-                CertRole::Originator,
-                CertUse::Signature,
-                "originator_signature",
-                self.signer_keypair.certificate().der(),
-            ),
-            cert_entry(
-                CertRole::Originator,
-                CertUse::Cipher,
-                "originator_cipher",
-                self.decrypter_keypair.certificate().der(),
-            ),
-        ];
-        if let Some(cert) = addressee {
-            entries.push(cert_entry(
-                CertRole::Addressee,
-                CertUse::Cipher,
-                "addressee_cipher",
-                cert.der(),
-            ));
-        }
+        let entries: Vec<OutCertEntry> = match kind {
+            MessageType::StoreDelivery | MessageType::PartialStoreDelivery => {
+                let mut entries = vec![
+                    cert_entry(
+                        CertRole::Originator,
+                        CertUse::Cipher,
+                        "originator_cipher",
+                        self.decrypter_keypair.certificate().der(),
+                    ),
+                    cert_entry(
+                        CertRole::Originator,
+                        CertUse::Signature,
+                        "originator_signature",
+                        self.signer_keypair.certificate().der(),
+                    ),
+                ];
+                if let Some(cert) = addressee {
+                    entries.push(cert_entry(
+                        CertRole::Addressee,
+                        CertUse::Cipher,
+                        "addressee_cipher",
+                        cert.der(),
+                    ));
+                }
+                entries
+            }
+            // InitDialog carries the cipher certificate mandatorily
+            MessageType::InitDialog => vec![
+                cert_entry(
+                    CertRole::Originator,
+                    CertUse::Cipher,
+                    "originator_cipher",
+                    self.decrypter_keypair.certificate().der(),
+                ),
+                cert_entry(
+                    CertRole::Originator,
+                    CertUse::Signature,
+                    "originator_signature",
+                    self.signer_keypair.certificate().der(),
+                ),
+            ],
+            // exit/fetch/process-card: signature certificate only
+            MessageType::ExitDialog
+            | MessageType::FetchDelivery
+            | MessageType::FetchProcessCard => {
+                vec![cert_entry(
+                    CertRole::Originator,
+                    CertUse::Signature,
+                    "originator_signature",
+                    self.signer_keypair.certificate().der(),
+                )]
+            }
+            _ => vec![
+                cert_entry(
+                    CertRole::Originator,
+                    CertUse::Cipher,
+                    "originator_cipher",
+                    self.decrypter_keypair.certificate().der(),
+                ),
+                cert_entry(
+                    CertRole::Originator,
+                    CertUse::Signature,
+                    "originator_signature",
+                    self.signer_keypair.certificate().der(),
+                ),
+            ],
+        };
         OutMessage {
             kind: Some(kind),
-            desired_languages: Some("de".into()),
+            desired_languages: (!kind.is_response()).then(|| "de".to_string()),
             non_intermediary_certificates: entries,
             ..Default::default()
         }
     }
 }
 
-/// One inline content unit. The composer base64-encodes `text` exactly
-/// once on the wire, so `text` must carry the raw payload — which restricts
-/// inline content to UTF-8 payloads. Binary XTA files ride as MIME
-/// attachments in the Java library's shape; oscirs's `encrypt_container`
-/// cannot take them into the encrypted blob yet, so until that lands
-/// upstream we fail loudly instead of shipping cleartext binary.
-fn inline_content(id: &str, data: &[u8]) -> Result<OutContent, Error> {
-    let text = std::str::from_utf8(data).map_err(|_| {
-        Error::Config(
-            "binary XTA payload: the native stack cannot encrypt MIME attachments yet \
-             (oscirs gap) — re-encode the payload or use the Java bridge for this message"
-                .into(),
-        )
-    })?;
-    Ok(OutContent {
-        id: id.to_string(),
-        text: Some(text.to_string()),
-        href: None,
-    })
+/// The XTA MessageMetaData custom-header fragment, in the shape of the
+/// reference fixture (`testcorpus/extension/xtaMmdOsci.xml`): author /
+/// reader identification plus WS-Addressing message id and size. oscirs
+/// canonicalizes the fragment and sets the Id attribute.
+fn mmd_fragment(
+    author: Option<&str>,
+    reader: Option<&str>,
+    message_id: &str,
+    total_bytes: usize,
+) -> String {
+    let mut inner = String::new();
+    if let Some(author) = author {
+        inner.push_str(&format!(
+            "<mmd:Originators><mmd:Author><mmd:Identifier type=\"xoev\">{}</mmd:Identifier></mmd:Author></mmd:Originators>",
+            xml_escape(author)
+        ));
+    }
+    if let Some(reader) = reader {
+        inner.push_str(&format!(
+            "<mmd:Destinations><mmd:Reader><mmd:Identifier type=\"xoev\">{}</mmd:Identifier></mmd:Reader></mmd:Destinations>",
+            xml_escape(reader)
+        ));
+    }
+    inner.push_str(&format!(
+        "<mmd:MsgIdentification><wsa:MessageID>urn:rosci:messageid:{}</wsa:MessageID></mmd:MsgIdentification>",
+        xml_escape(message_id)
+    ));
+    inner.push_str(&format!("<mmd:MsgSize>{total_bytes}</mmd:MsgSize>"));
+    format!(
+        "<mmd:MessageMetaData xmlns:mmd=\"http://www.osci.eu/ws/2014/10/transport\" xmlns:wsa=\"http://www.w3.org/2005/08/addressing\">{inner}</mmd:MessageMetaData>"
+    )
+}
+
+/// Content ids ride in `cid:` references and MIME Content-ID headers;
+/// keep them to token characters (the Java bridge used the raw filename,
+/// which is fine until it isn't).
+fn sanitize_content_id(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '@') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "attachment".to_string()
+    } else {
+        cleaned
+    }
 }
 
 fn cert_entry(role: CertRole, use_: CertUse, id: &str, der: &[u8]) -> OutCertEntry {
@@ -512,42 +725,6 @@ fn feedback_rows(message: &OsciMessage) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// Verifies the response's transport signature, when it carries one. The
-/// Java library verified incoming signatures automatically and failed
-/// loudly; the native path must be equally suspicious. Signature material
-/// (the intermediary's certificate) travels in the message itself.
-fn verify_response_signature(capture: &std::sync::Mutex<Vec<u8>>) -> Result<bool, Error> {
-    let xml = capture.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    // verify the XML part, not the MIME stream — the verifier is an XML
-    // creature
-    let stored = oci::StoredMessage::load(&xml).map_err(|e| Error::Bridge {
-        kind: crate::error::BridgeErrorKind::Osci,
-        message: format!("response unparseable during signature check: {e}"),
-        feedback: Vec::new(),
-    })?;
-    let text = String::from_utf8_lossy(&stored.xml).into_owned();
-    // responses carry ClientSignature (supplier-less setups) or
-    // SupplierSignature (the intermediary signs) — verify whichever rides
-    if !text.contains("osci:ClientSignature") && !text.contains("osci:SupplierSignature") {
-        return Ok(false);
-    }
-    match oci::security::verify_message(&text, &[]) {
-        Ok(report) if report.all_valid() => Ok(true),
-        Ok(report) => Err(Error::Bridge {
-            kind: crate::error::BridgeErrorKind::Osci,
-            message: format!("response signature invalid: {report:?}"),
-            feedback: Vec::new(),
-        }),
-        Err(e) => Err(Error::Bridge {
-            kind: crate::error::BridgeErrorKind::Osci,
-            message: format!("response signature unverifiable: {e}"),
-            feedback: Vec::new(),
-        }),
-    }
-}
-
-/// Java-bridge feedback classification: receipts pass, 3800 passes,
-/// everything else is a rejection carrying all rows as evidence.
 fn check_feedback(message: &OsciMessage) -> Result<(), Error> {
     for row in &message.feedback {
         if !feedback_is_acceptable(&row.code) {
@@ -573,17 +750,17 @@ fn container_contents(container_xml: &[u8]) -> Vec<FetchedContent> {
     };
     let mut out = Vec::new();
     fn walk(element: &osci_core::xml::Element, out: &mut Vec<FetchedContent>) {
-        if element.local == "Content" {
-            for child in element.elements() {
-                if child.local == "Base64Content" {
-                    out.push(FetchedContent {
-                        filename: None,
-                        content_type: None,
-                        data: child.text(),
-                        container: Some("encrypted".into()),
-                    });
-                }
-            }
+        // Base64Content sits under osci:Content in the Java writer's
+        // shape, but sealed containers in the wild also carry it directly
+        // under the container — match at any depth.
+        if element.local == "Base64Content" {
+            out.push(FetchedContent {
+                filename: None,
+                content_type: None,
+                data: normalize_base64(&element.text()),
+                container: Some("encrypted".into()),
+            });
+            return;
         }
         for child in element.elements() {
             walk(child, out);
@@ -616,7 +793,7 @@ fn map_plain_container(
             contents.push(FetchedContent {
                 filename: None,
                 content_type: None,
-                data: b64.clone(),
+                data: normalize_base64(b64),
                 container: Some("plain".into()),
             });
         } else if let Some(href) = &content.href {
@@ -626,9 +803,11 @@ fn map_plain_container(
                 .find(|a| a.content_id == cid || format!("<{}>", a.content_id) == cid)
             {
                 contents.push(FetchedContent {
-                    filename: None,
+                    // the content id doubles as the filename — the same
+                    // convention the Java bridge's Attachment refIds used
+                    filename: Some(cid.to_string()),
                     content_type: Some(att.content_type.clone()),
-                    data: base64::encode(&att.data),
+                    data: normalize_base64(&base64::encode(&att.data)),
                     container: Some("plain".into()),
                 });
             }

@@ -10,7 +10,15 @@ yanked = "deny"
 # bridge carried — same vulnerability class, same transport-only surface
 # (RSAES-PKCS1-v1_5 key unwrap of partner-chosen ciphertexts). Revisit when
 # RustCrypto/RSA#626 lands; see SECURITY.md.
-ignore = ["RUSTSEC-2023-0071"]
+ignore = [
+    "RUSTSEC-2023-0071",
+    # RUSTSEC-2026-0387 (crypto-bigint timing variability): the fix is a
+    # semver bump to 0.7.x that elliptic-curve 0.13 (p256 ECDSA in the
+    # oscirs crypto stack) cannot take yet — upstream-blocked. Exposure is
+    # on the ECDSA *verify* path only (partner signatures); our private-key
+    # operations are RSA. Revisit when oscirs moves to p256 0.14.
+    "RUSTSEC-2026-0387",
+]
 
 [licenses]
 version = 2

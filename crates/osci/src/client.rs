@@ -320,15 +320,13 @@ impl SendBuilder<'_> {
     }
 
     /// Sets the XTA MessageMetaData author identifier (Ergänzung; e.g.
-    /// an AGS like `ags:NNNNNNNNNNN`). Not yet supported natively —
-    /// MessageMetaData composition is an oscirs follow-up.
+    /// an AGS like `ags:NNNNNNNNNNN`).
     pub fn metadata_author(mut self, id: impl Into<String>) -> Self {
         self.metadata_author = Some(id.into());
         self
     }
 
-    /// Sets the XTA MessageMetaData reader identifier. Not yet supported
-    /// natively — MessageMetaData composition is an oscirs follow-up.
+    /// Sets the XTA MessageMetaData reader identifier.
     pub fn metadata_reader(mut self, id: impl Into<String>) -> Self {
         self.metadata_reader = Some(id.into());
         self
@@ -360,24 +358,20 @@ impl SendBuilder<'_> {
                 "EFFI chunked send is not supported by the native stack yet".into(),
             ));
         }
-        if self.metadata_author.is_some() || self.metadata_reader.is_some() {
-            return Err(Error::Config(
-                "XTA MessageMetaData (author/reader) is not composed by the native stack yet"
-                    .into(),
-            ));
-        }
         let recipient = self.recipient.ok_or_else(|| {
             Error::Config("recipient (cipher certificate or DVDV entry) is required".into())
         })?;
 
-        self.client.native.send_xta(
-            &self.xta,
-            &self.attachments,
-            &recipient.cipher_cert,
-            self.subject.as_deref(),
-            self.sign,
-            self.encrypt,
-        )
+        self.client.native.send_xta(crate::native::SendRequest {
+            xta: &self.xta,
+            attachments: &self.attachments,
+            recipient_cipher_cert: &recipient.cipher_cert,
+            subject: self.subject.as_deref(),
+            metadata_author: self.metadata_author.as_deref(),
+            metadata_reader: self.metadata_reader.as_deref(),
+            sign: self.sign,
+            encrypt: self.encrypt,
+        })
     }
 }
 
