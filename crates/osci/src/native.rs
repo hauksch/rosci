@@ -1026,9 +1026,15 @@ impl NativeClient {
                 ),
             ],
         };
+        // the pinned live shape for partial messages omits
+        // DesiredLanguages entirely
+        let desired_languages = match kind {
+            MessageType::PartialStoreDelivery | MessageType::PartialFetchDelivery => None,
+            _ => (!kind.is_response()).then(|| "de".to_string()),
+        };
         OutMessage {
             kind: Some(kind),
-            desired_languages: (!kind.is_response()).then(|| "de".to_string()),
+            desired_languages,
             non_intermediary_certificates: entries,
             ..Default::default()
         }

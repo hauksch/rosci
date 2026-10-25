@@ -8,10 +8,10 @@ license.workspace = true
 [dependencies]
 # OSCI-Rust-Rewrite stack (dialogs, message compose/parse, crypto, transport).
 # Pinned by rev until oscirs starts tagging; bump via `cargo update -p osci_rs`.
-osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "84988ae2eba7879c95ee722ecc7b24b451ca3a65" }
-osci_crypto = { package = "osci-crypto", git = "https://github.com/hauksch/oscirs", rev = "84988ae2eba7879c95ee722ecc7b24b451ca3a65" }
-osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "84988ae2eba7879c95ee722ecc7b24b451ca3a65" }
-osci_transport = { package = "osci-transport", git = "https://github.com/hauksch/oscirs", rev = "84988ae2eba7879c95ee722ecc7b24b451ca3a65" }
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "3250f9a809cc4d56a523153e6edc15bd6e51acc8" }
+osci_crypto = { package = "osci-crypto", git = "https://github.com/hauksch/oscirs", rev = "3250f9a809cc4d56a523153e6edc15bd6e51acc8" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "3250f9a809cc4d56a523153e6edc15bd6e51acc8" }
+osci_transport = { package = "osci-transport", git = "https://github.com/hauksch/oscirs", rev = "3250f9a809cc4d56a523153e6edc15bd6e51acc8" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -35,5 +35,5 @@ expect_used = "warn"
 tempfile = "3"
 proptest = { workspace = true }
 # Integration tests drive the oscirs types directly (scripted mock).
-osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "84988ae2eba7879c95ee722ecc7b24b451ca3a65" }
-osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "84988ae2eba7879c95ee722ecc7b24b451ca3a65" }
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "3250f9a809cc4d56a523153e6edc15bd6e51acc8" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "3250f9a809cc4d56a523153e6edc15bd6e51acc8" }
