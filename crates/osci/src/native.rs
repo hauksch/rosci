@@ -145,6 +145,15 @@ impl CapturingTransport {
 
 impl Transport for CapturingTransport {
     fn send(&self, message: &[u8]) -> Result<Vec<u8>, TransportError> {
+        if std::env::var_os("ROSCI_DEBUG").is_some() {
+            let text = String::from_utf8_lossy(message);
+            if let Some(start) = text.find("partialStoreDelivery") {
+                eprintln!(
+                    "ROSCI_DEBUG: partial request XML:\n{}",
+                    &text[(text.rfind("<?xml").unwrap_or(0))..(start + 2400).min(text.len())]
+                );
+            }
+        }
         let response = self.inner.send(message)?;
         if std::env::var_os("ROSCI_DEBUG").is_some() {
             eprintln!(
@@ -960,7 +969,7 @@ impl NativeClient {
     /// the originator signature and the addressee's cipher certificate.
     fn base_message(&self, kind: MessageType, addressee: Option<&Certificate>) -> OutMessage {
         let entries: Vec<OutCertEntry> = match kind {
-            MessageType::StoreDelivery | MessageType::PartialStoreDelivery => {
+            MessageType::StoreDelivery => {
                 let mut entries = vec![
                     cert_entry(
                         CertRole::Originator,
@@ -975,6 +984,25 @@ impl NativeClient {
                         self.signer_keypair.certificate().der(),
                     ),
                 ];
+                if let Some(cert) = addressee {
+                    entries.push(cert_entry(
+                        CertRole::Addressee,
+                        CertUse::Cipher,
+                        "addressee_cipher",
+                        cert.der(),
+                    ));
+                }
+                entries
+            }
+            // the pinned live partial shape carries only originator cipher
+            // + addressee cipher — no signature certificate entry
+            MessageType::PartialStoreDelivery => {
+                let mut entries = vec![cert_entry(
+                    CertRole::Originator,
+                    CertUse::Cipher,
+                    "originator_cipher",
+                    self.decrypter_keypair.certificate().der(),
+                )];
                 if let Some(cert) = addressee {
                     entries.push(cert_entry(
                         CertRole::Addressee,
