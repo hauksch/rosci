@@ -321,6 +321,13 @@ impl NativeClient {
         // Round 1: reserve a message id — the intermediary hands them out
         // like queue numbers at the Amt, and nobody may skip the line.
         let mut get_id = self.base_message(MessageType::GetMessageId, None);
+        if chunk_size_kb.is_some() {
+            // EFFI capability announcement: the reference announces the
+            // FeatureDescription ONCE, on the dialog's first message
+            // (isSendFeatureDescription flips after use) — partial
+            // deliveries without a prior FD announcement are rejected 9300
+            get_id.feature_description = Some(chunk_feature_description());
+        }
         let rsp = dialog
             .send(&mut get_id, &[], &boundary())
             .map_err(native_error)?;
@@ -496,7 +503,6 @@ impl NativeClient {
                     total_message_size: Some(total_kb as i64),
                     received_chunks: Vec::new(),
                 });
-                partial.feature_description = Some(chunk_feature_description());
                 let content_id = format!("chunk-{i}");
                 partial.attachments = vec![OutAttachment {
                     content_id: content_id.clone(),
@@ -1054,12 +1060,10 @@ impl NativeClient {
                 ),
             ],
         };
-        // the pinned live shape for partial messages omits
-        // DesiredLanguages entirely
-        let desired_languages = match kind {
-            MessageType::PartialStoreDelivery | MessageType::PartialFetchDelivery => None,
-            _ => (!kind.is_response()).then(|| "de".to_string()),
-        };
+        // partial deliveries REQUIRE DesiredLanguages (the Issue-#8 wire
+        // diff vs the 2.6.1 writer settled it — the earlier pinned shape
+        // was wrong on this point)
+        let desired_languages = (!kind.is_response()).then(|| "de".to_string());
         OutMessage {
             kind: Some(kind),
             desired_languages,

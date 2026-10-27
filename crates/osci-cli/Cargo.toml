@@ -25,6 +25,6 @@ tempfile = "3"
 proptest = { workspace = true }
 sha2 = "0.11"
 # The CLI tests drive a scripted oscirs intermediary in-process.
-osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "13e0e47648e10d636f8dd48bcc56d40584b33b01" }
-osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "13e0e47648e10d636f8dd48bcc56d40584b33b01" }
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "44294fca09d5c2c09639d2e7a95c8216b2adb65e" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "44294fca09d5c2c09639d2e7a95c8216b2adb65e" }
 chrono = "0.4"

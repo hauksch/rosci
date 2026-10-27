@@ -8,10 +8,10 @@ license.workspace = true
 [dependencies]
 # OSCI-Rust-Rewrite stack (dialogs, message compose/parse, crypto, transport).
 # Pinned by rev until oscirs starts tagging; bump via `cargo update -p osci_rs`.
-osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "13e0e47648e10d636f8dd48bcc56d40584b33b01" }
-osci_crypto = { package = "osci-crypto", git = "https://github.com/hauksch/oscirs", rev = "13e0e47648e10d636f8dd48bcc56d40584b33b01" }
-osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "13e0e47648e10d636f8dd48bcc56d40584b33b01" }
-osci_transport = { package = "osci-transport", git = "https://github.com/hauksch/oscirs", rev = "13e0e47648e10d636f8dd48bcc56d40584b33b01" }
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "44294fca09d5c2c09639d2e7a95c8216b2adb65e" }
+osci_crypto = { package = "osci-crypto", git = "https://github.com/hauksch/oscirs", rev = "44294fca09d5c2c09639d2e7a95c8216b2adb65e" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "44294fca09d5c2c09639d2e7a95c8216b2adb65e" }
+osci_transport = { package = "osci-transport", git = "https://github.com/hauksch/oscirs", rev = "44294fca09d5c2c09639d2e7a95c8216b2adb65e" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -35,5 +35,5 @@ expect_used = "warn"
 tempfile = "3"
 proptest = { workspace = true }
 # Integration tests drive the oscirs types directly (scripted mock).
-osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "13e0e47648e10d636f8dd48bcc56d40584b33b01" }
-osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "13e0e47648e10d636f8dd48bcc56d40584b33b01" }
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "44294fca09d5c2c09639d2e7a95c8216b2adb65e" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "44294fca09d5c2c09639d2e7a95c8216b2adb65e" }

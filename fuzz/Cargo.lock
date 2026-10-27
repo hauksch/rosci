@@ -950,7 +950,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 [[package]]
 name = "osci"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=84988ae2eba7879c95ee722ecc7b24b451ca3a65#84988ae2eba7879c95ee722ecc7b24b451ca3a65"
+source = "git+https://github.com/hauksch/oscirs?rev=44294fca09d5c2c09639d2e7a95c8216b2adb65e#44294fca09d5c2c09639d2e7a95c8216b2adb65e"
 dependencies = [
  "base64",
  "osci-core",
@@ -982,7 +982,7 @@ dependencies = [
 [[package]]
 name = "osci-core"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=84988ae2eba7879c95ee722ecc7b24b451ca3a65#84988ae2eba7879c95ee722ecc7b24b451ca3a65"
+source = "git+https://github.com/hauksch/oscirs?rev=44294fca09d5c2c09639d2e7a95c8216b2adb65e#44294fca09d5c2c09639d2e7a95c8216b2adb65e"
 dependencies = [
  "chrono",
  "osci-crypto",
@@ -994,7 +994,7 @@ dependencies = [
 [[package]]
 name = "osci-crypto"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=84988ae2eba7879c95ee722ecc7b24b451ca3a65#84988ae2eba7879c95ee722ecc7b24b451ca3a65"
+source = "git+https://github.com/hauksch/oscirs?rev=44294fca09d5c2c09639d2e7a95c8216b2adb65e#44294fca09d5c2c09639d2e7a95c8216b2adb65e"
 dependencies = [
  "aes 0.8.4",
  "base64",
@@ -1026,7 +1026,7 @@ dependencies = [
 [[package]]
 name = "osci-transport"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=84988ae2eba7879c95ee722ecc7b24b451ca3a65#84988ae2eba7879c95ee722ecc7b24b451ca3a65"
+source = "git+https://github.com/hauksch/oscirs?rev=44294fca09d5c2c09639d2e7a95c8216b2adb65e#44294fca09d5c2c09639d2e7a95c8216b2adb65e"
 dependencies = [
  "thiserror",
  "ureq",
