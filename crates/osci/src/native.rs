@@ -323,10 +323,9 @@ impl NativeClient {
         // like queue numbers at the Amt, and nobody may skip the line.
         let mut get_id = self.base_message(MessageType::GetMessageId, None);
         if chunk_size_kb.is_some() {
-            // EFFI capability announcement: the reference announces the
-            // FeatureDescription ONCE, on the dialog's first message
-            // (isSendFeatureDescription flips after use) — partial
-            // deliveries without a prior FD announcement are rejected 9300
+            // EFFI announcement on the dialog's first message; the FD form
+            // matches the reference exactly now (feature list, no
+            // chunk-size attributes)
             get_id.feature_description = Some(chunk_feature_description());
         }
         let rsp = dialog
@@ -458,6 +457,44 @@ impl NativeClient {
             .collect();
 
         let boundary = boundary();
+        let result = self.send_delivery(
+            &mut dialog,
+            &capture,
+            &mut store,
+            container,
+            addressee_id,
+            &recipient,
+            encrypt,
+            chunk_size_kb,
+            &sign_attachments,
+            &boundary,
+            message_id.clone(),
+            subject,
+        );
+        if result.is_err() {
+            self.exit_dialog_quietly(&mut dialog);
+        }
+        result
+    }
+
+    /// The StoreDelivery (or chunked partial sequence) exchange, split out
+    /// of [`NativeClient::send_xta`] so error paths can close the dialog.
+    #[allow(clippy::too_many_arguments)]
+    fn send_delivery(
+        &self,
+        dialog: &mut Dialog,
+        capture: &ResponseCapture,
+        store: &mut OutMessage,
+        container: OutContentContainer,
+        addressee_id: String,
+        recipient: &Certificate,
+        encrypt: bool,
+        chunk_size_kb: Option<u64>,
+        sign_attachments: &[(String, Vec<u8>)],
+        boundary: &str,
+        message_id: String,
+        subject: Option<&str>,
+    ) -> Result<Receipt, Error> {
         if let Some(chunk_kb) = chunk_size_kb.filter(|kb| *kb > 0) {
             // EFFI chunked transfer: compose + encrypt + sign the COMPLETE
             // StoreDelivery, split it, and ship each chunk as a
@@ -482,7 +519,7 @@ impl NativeClient {
             }
 
             let full = dialog
-                .compose_signed_stream(&mut store, &sign_attachments, &boundary)
+                .compose_signed_stream(store, sign_attachments, boundary)
                 .map_err(native_error)?;
             let chunk_bytes = (chunk_kb as usize) * 1024;
             let total_chunks = full.len().div_ceil(chunk_bytes).max(1);
@@ -495,12 +532,22 @@ impl NativeClient {
                 let blob = full[from..from + len].to_vec();
 
                 let mut partial =
-                    self.base_message(MessageType::PartialStoreDelivery, Some(&recipient));
-                // the reference appends "_Partial" to the MessageId and
-                // base64-encodes the result (compose oracle)
-                let partial_id = base64::encode(format!("{message_id}_Partial").as_bytes());
-                partial.entry_inner =
-                    Some(format!("<osci:MessageId>{partial_id}</osci:MessageId>"));
+                    self.base_message(MessageType::PartialStoreDelivery, Some(recipient));
+                // the reference appends "_Partial" to the MessageId IN
+                // ITS WIRE FORM (still base64) and base64-encodes the
+                // result — double-encoded on the wire (compose oracle)
+                // message_id is the DECODED form; the wire form is its
+                // base64 — the reference starts from THAT
+                let wire_id = base64::encode(message_id.as_bytes());
+                let partial_id = base64::encode(format!("{wire_id}_Partial").as_bytes());
+                partial.entry_inner = Some(if let Some(subject) = subject {
+                    format!(
+                        "<osci:MessageId>{partial_id}</osci:MessageId><osci:Subject>{}</osci:Subject>",
+                        xml_escape(subject)
+                    )
+                } else {
+                    format!("<osci:MessageId>{partial_id}</osci:MessageId>")
+                });
                 partial.chunk_information = Some(osci_core::message::ChunkInformation {
                     chunk_number: i as i64,
                     chunk_size: Some(chunk_kb as i64),
@@ -508,8 +555,7 @@ impl NativeClient {
                     total_message_size: Some(total_kb as i64),
                     received_chunks: Vec::new(),
                 });
-                // the partial schemas mandate the FeatureDescription on
-                // every partial (oscirs compose enforces it)
+                // the partial schemas mandate the FeatureDescription
                 partial.feature_description = Some(chunk_feature_description());
                 let content_id = format!("chunk-{i}");
                 partial.attachments = vec![OutAttachment {
@@ -531,7 +577,7 @@ impl NativeClient {
                 });
 
                 let chunk_response = dialog
-                    .send(&mut partial, &[(content_id, blob)], &boundary)
+                    .send(&mut partial, &[(content_id, blob)], boundary)
                     .map_err(native_error)?;
                 check_feedback(&chunk_response)?;
                 // the reassembled delivery's verdict arrives as INSIDE
@@ -542,11 +588,11 @@ impl NativeClient {
                 if i == total_chunks {
                     last_signed = dialog.last_response_report().is_some();
                 }
-                Self::advance_state(&mut dialog);
-                Self::verify_transport_signature(&capture)?;
+                Self::advance_state(dialog);
+                Self::verify_transport_signature(capture)?;
             }
 
-            self.exit_dialog_quietly(&mut dialog);
+            self.exit_dialog_quietly(dialog);
             return Ok(Receipt {
                 message_id,
                 response_signed: Some(last_signed),
@@ -555,30 +601,30 @@ impl NativeClient {
         };
         let response = if encrypt {
             let recipients = vec![EncRecipient {
-                cert: recipient,
+                cert: recipient.clone(),
                 cert_element_id: addressee_id.clone(),
             }];
             dialog
                 .send_encrypted(
-                    &mut store,
+                    store,
                     oci::dialog::ContentEncryption {
                         inner: container,
                         recipients: &recipients,
                         config: EncryptConfig::default(),
                     },
-                    &sign_attachments,
-                    &boundary,
+                    sign_attachments,
+                    boundary,
                 )
                 .map_err(native_error)?
         } else {
             store.containers.push(container);
             dialog
-                .send(&mut store, &sign_attachments, &boundary)
+                .send(store, sign_attachments, boundary)
                 .map_err(native_error)?
         };
         check_feedback(&response)?;
-        Self::advance_state(&mut dialog);
-        Self::verify_transport_signature(&capture)?;
+        Self::advance_state(dialog);
+        Self::verify_transport_signature(capture)?;
         // oscirs's dialog verifies the response signature by policy
         // (VerifyIfPresent) and errors on tampering; the report's presence
         // is the "response was signed" fact for the receipt.
@@ -593,7 +639,7 @@ impl NativeClient {
             .map(decode_message_id)
             .unwrap_or(message_id);
 
-        self.exit_dialog_quietly(&mut dialog);
+        self.exit_dialog_quietly(dialog);
         Ok(Receipt {
             message_id,
             response_signed: Some(signed),
