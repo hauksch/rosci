@@ -300,6 +300,7 @@ impl NativeClient {
     /// itself is encrypted.
     pub fn send_xta(&self, request: SendRequest<'_>) -> Result<Receipt, Error> {
         let recipient = parse_certificate(request.recipient_cipher_cert)?;
+        let addressee_id = cert_entry_id("addressee", "cipher", recipient.der());
         let SendRequest {
             xta,
             attachments,
@@ -468,7 +469,7 @@ impl NativeClient {
                     &container,
                     &[EncRecipient {
                         cert: recipient.clone(),
-                        cert_element_id: "addressee_cipher".to_string(),
+                        cert_element_id: addressee_id.clone(),
                     }],
                     &EncryptConfig::default(),
                     Some("encdata_0".to_string()),
@@ -495,7 +496,11 @@ impl NativeClient {
 
                 let mut partial =
                     self.base_message(MessageType::PartialStoreDelivery, Some(&recipient));
-                partial.entry_inner = Some(format!("<osci:MessageId>{reserved}</osci:MessageId>"));
+                // the reference appends "_Partial" to the MessageId and
+                // base64-encodes the result (compose oracle)
+                let partial_id = base64::encode(format!("{message_id}_Partial").as_bytes());
+                partial.entry_inner =
+                    Some(format!("<osci:MessageId>{partial_id}</osci:MessageId>"));
                 partial.chunk_information = Some(osci_core::message::ChunkInformation {
                     chunk_number: i as i64,
                     chunk_size: Some(chunk_kb as i64),
@@ -503,6 +508,9 @@ impl NativeClient {
                     total_message_size: Some(total_kb as i64),
                     received_chunks: Vec::new(),
                 });
+                // the partial schemas mandate the FeatureDescription on
+                // every partial (oscirs compose enforces it)
+                partial.feature_description = Some(chunk_feature_description());
                 let content_id = format!("chunk-{i}");
                 partial.attachments = vec![OutAttachment {
                     content_id: content_id.clone(),
@@ -548,7 +556,7 @@ impl NativeClient {
         let response = if encrypt {
             let recipients = vec![EncRecipient {
                 cert: recipient,
-                cert_element_id: "addressee_cipher".to_string(),
+                cert_element_id: addressee_id.clone(),
             }];
             dialog
                 .send_encrypted(
@@ -769,8 +777,13 @@ impl NativeClient {
             ))],
         };
         let signer = P12Signer::new((*self.signer_keypair).clone(), None);
-        let mut dialog = Dialog::new(Box::new(capturing))
-            .with_signer(Box::new(signer), "originator_signature".to_string());
+        let signature_id = cert_entry_id(
+            "originator",
+            "signature",
+            self.signer_keypair.certificate().der(),
+        );
+        let mut dialog =
+            Dialog::new(Box::new(capturing)).with_signer(Box::new(signer), signature_id);
         // the response's transport signature is verified below with the
         // response's own MIME parts — the dialog's policy can't know which
         // signature is the transport one, and originator content signatures
@@ -974,63 +987,57 @@ impl NativeClient {
     /// carry only the originator cipher certificate, store deliveries add
     /// the originator signature and the addressee's cipher certificate.
     fn base_message(&self, kind: MessageType, addressee: Option<&Certificate>) -> OutMessage {
-        let entries: Vec<OutCertEntry> = match kind {
-            MessageType::StoreDelivery => {
-                let mut entries = vec![
+        let cipher_id = cert_entry_id(
+            "originator",
+            "cipher",
+            self.decrypter_keypair.certificate().der(),
+        );
+        let signature_id = cert_entry_id(
+            "originator",
+            "signature",
+            self.signer_keypair.certificate().der(),
+        );
+        let entries = match kind {
+            // partial NIC = cipher-originator + cipher-addressee +
+            // signature-originator (the ClientSignature's RetrievalMethod
+            // target), pinned by the compose oracle
+            MessageType::StoreDelivery | MessageType::PartialStoreDelivery => {
+                let mut e = vec![
                     cert_entry(
                         CertRole::Originator,
                         CertUse::Cipher,
-                        "originator_cipher",
+                        &cipher_id,
                         self.decrypter_keypair.certificate().der(),
                     ),
                     cert_entry(
                         CertRole::Originator,
                         CertUse::Signature,
-                        "originator_signature",
+                        &signature_id,
                         self.signer_keypair.certificate().der(),
                     ),
                 ];
                 if let Some(cert) = addressee {
-                    entries.push(cert_entry(
+                    e.push(cert_entry(
                         CertRole::Addressee,
                         CertUse::Cipher,
-                        "addressee_cipher",
+                        &cert_entry_id("addressee", "cipher", cert.der()),
                         cert.der(),
                     ));
                 }
-                entries
-            }
-            // the pinned live partial shape carries only originator cipher
-            // + addressee cipher — no signature certificate entry
-            MessageType::PartialStoreDelivery => {
-                let mut entries = vec![cert_entry(
-                    CertRole::Originator,
-                    CertUse::Cipher,
-                    "originator_cipher",
-                    self.decrypter_keypair.certificate().der(),
-                )];
-                if let Some(cert) = addressee {
-                    entries.push(cert_entry(
-                        CertRole::Addressee,
-                        CertUse::Cipher,
-                        "addressee_cipher",
-                        cert.der(),
-                    ));
-                }
-                entries
+                e
             }
             // InitDialog carries the cipher certificate mandatorily
             MessageType::InitDialog => vec![
                 cert_entry(
                     CertRole::Originator,
                     CertUse::Cipher,
-                    "originator_cipher",
+                    &cipher_id,
                     self.decrypter_keypair.certificate().der(),
                 ),
                 cert_entry(
                     CertRole::Originator,
                     CertUse::Signature,
-                    "originator_signature",
+                    &signature_id,
                     self.signer_keypair.certificate().der(),
                 ),
             ],
@@ -1041,7 +1048,7 @@ impl NativeClient {
                 vec![cert_entry(
                     CertRole::Originator,
                     CertUse::Signature,
-                    "originator_signature",
+                    &signature_id,
                     self.signer_keypair.certificate().der(),
                 )]
             }
@@ -1049,20 +1056,19 @@ impl NativeClient {
                 cert_entry(
                     CertRole::Originator,
                     CertUse::Cipher,
-                    "originator_cipher",
+                    &cipher_id,
                     self.decrypter_keypair.certificate().der(),
                 ),
                 cert_entry(
                     CertRole::Originator,
                     CertUse::Signature,
-                    "originator_signature",
+                    &signature_id,
                     self.signer_keypair.certificate().der(),
                 ),
             ],
         };
         // partial deliveries REQUIRE DesiredLanguages (the Issue-#8 wire
-        // diff vs the 2.6.1 writer settled it — the earlier pinned shape
-        // was wrong on this point)
+        // diff vs the 2.6.1 writer settled it)
         let desired_languages = (!kind.is_response()).then(|| "de".to_string());
         OutMessage {
             kind: Some(kind),
@@ -1076,12 +1082,26 @@ impl NativeClient {
 /// FeatureDescription header of partial deliveries (mandatory in the
 /// partial schemas; the reference ships these defaults).
 fn chunk_feature_description() -> FeatureDescription {
+    // the reference FD carries no chunk-size attributes (defaults) and
+    // announces the full feature set — PartialMessageTransmission is the
+    // EFFI capability the manager checks before accepting partial
+    // deliveries (compose oracle, live 9300 differential)
     FeatureDescription {
-        chunk_message_timeout: Some(300),
-        max_chunk_size: Some(50_000),
-        max_message_size: Some(500_000),
-        min_chunk_size: Some(1),
-        features: vec![("DisableBase64".to_string(), "1.0.0".to_string())],
+        chunk_message_timeout: None,
+        max_chunk_size: None,
+        max_message_size: None,
+        min_chunk_size: None,
+        features: vec![
+            ("DisableBase64".to_string(), "1.2.0".to_string()),
+            ("OAEPEncryption".to_string(), "1.6.0".to_string()),
+            ("SHA3HashAlgo".to_string(), "1.6.3".to_string()),
+            ("GCMPaddingModus".to_string(), "1.7.0".to_string()),
+            (
+                "PartialMessageTransmission".to_string(),
+                "1.8.0".to_string(),
+            ),
+            ("Support96Bit12ByteIV".to_string(), "1.9.0".to_string()),
+        ],
     }
 }
 
@@ -1159,6 +1179,19 @@ fn cert_entry(role: CertRole, use_: CertUse, id: &str, der: &[u8]) -> OutCertEnt
         id: id.to_string(),
         der: der.to_vec(),
     }
+}
+
+/// Certificate entry Ids in the reference writer's form
+/// `{role}_{use}_{sha256-hex(DER)}` — the ClientSignature's
+/// RetrievalMethod and the EncryptedKey references target these ids, so
+/// they must be exactly this (pinned by the compose oracle).
+fn cert_entry_id(role: &str, use_: &str, der: &[u8]) -> String {
+    let hex: String = oci::digest_bytes("http://www.w3.org/2001/04/xmlenc#sha256", der)
+        .unwrap_or_default()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("{role}_{use_}_{hex}")
 }
 
 /// Response feedback into protocol rows (`[text, code]`, the wire order
