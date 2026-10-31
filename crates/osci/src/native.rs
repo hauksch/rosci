@@ -147,11 +147,15 @@ impl Transport for CapturingTransport {
     fn send(&self, message: &[u8]) -> Result<Vec<u8>, TransportError> {
         if std::env::var_os("ROSCI_DEBUG").is_some() {
             let text = String::from_utf8_lossy(message);
-            if let Some(start) = text.find("partialStoreDelivery") {
-                eprintln!(
-                    "ROSCI_DEBUG: partial request XML:\n{}",
-                    &text[(text.rfind("<?xml").unwrap_or(0))..(start + 2400).min(text.len())]
-                );
+            if text.contains("partialStoreDelivery") && text.contains("<osci:Subject") {
+                let from = text.find("<?xml").unwrap_or(0);
+                let to = text
+                    .rfind("</soap:Envelope>")
+                    .map(|e| e + 16)
+                    .unwrap_or(text.len());
+                if from < to {
+                    eprintln!("ROSCI_DEBUG: partial request XML:\n{}", &text[from..to]);
+                }
             }
         }
         let response = self.inner.send(message)?;
@@ -196,7 +200,7 @@ impl Transport for CapturingTransport {
             if let Some(start) = text.find("<osci:ControlBlock") {
                 eprintln!(
                     "ROSCI_DEBUG: peeled control block: {}",
-                    &text[start..(start + 300).min(text.len())]
+                    &text[start..(start + 700).min(text.len())]
                 );
             }
         }
@@ -314,18 +318,15 @@ impl NativeClient {
         } = request;
         let (mut dialog, capture) = self.dialog()?;
 
-        // Round 0: open the dialog. Only InitDialog may start one — the
-        // live intermediary rejects a GetMessageId with a sequence number
-        // but no dialog (9400), which the local mock tolerated.
-        self.open_dialog(&mut dialog)?;
-
-        // Round 1: reserve a message id — the intermediary hands them out
-        // like queue numbers at the Amt, and nobody may skip the line.
+        // The reference client's CHUNKED flow (wire-verified against the
+        // live intermediary via the Java bridge): NO InitDialog — the
+        // GetMessageId opens the dialog carrying Challenge + seq 0 + the
+        // FeatureDescription, no Response/ConversationId.
         let mut get_id = self.base_message(MessageType::GetMessageId, None);
         if chunk_size_kb.is_some() {
-            // EFFI announcement on the dialog's first message; the FD form
-            // matches the reference exactly now (feature list, no
-            // chunk-size attributes)
+            get_id.control_block.sequence_number = Some(0);
+            get_id.control_block.response = None;
+            get_id.control_block.conversation_id = None;
             get_id.feature_description = Some(chunk_feature_description());
         }
         let rsp = dialog
@@ -493,7 +494,7 @@ impl NativeClient {
         sign_attachments: &[(String, Vec<u8>)],
         boundary: &str,
         message_id: String,
-        subject: Option<&str>,
+        _subject: Option<&str>,
     ) -> Result<Receipt, Error> {
         if let Some(chunk_kb) = chunk_size_kb.filter(|kb| *kb > 0) {
             // EFFI chunked transfer: compose + encrypt + sign the COMPLETE
@@ -540,14 +541,8 @@ impl NativeClient {
                 // base64 — the reference starts from THAT
                 let wire_id = base64::encode(message_id.as_bytes());
                 let partial_id = base64::encode(format!("{wire_id}_Partial").as_bytes());
-                partial.entry_inner = Some(if let Some(subject) = subject {
-                    format!(
-                        "<osci:MessageId>{partial_id}</osci:MessageId><osci:Subject>{}</osci:Subject>",
-                        xml_escape(subject)
-                    )
-                } else {
-                    format!("<osci:MessageId>{partial_id}</osci:MessageId>")
-                });
+                partial.entry_inner =
+                    Some(format!("<osci:MessageId>{partial_id}</osci:MessageId>"));
                 partial.chunk_information = Some(osci_core::message::ChunkInformation {
                     chunk_number: i as i64,
                     chunk_size: Some(chunk_kb as i64),
@@ -557,6 +552,11 @@ impl NativeClient {
                 });
                 // the partial schemas mandate the FeatureDescription
                 partial.feature_description = Some(chunk_feature_description());
+                // the partial continues the dialog: ConversationId
+                // (adopted) + Response answering the manager's latest
+                // challenge (both adopted by oscirs's control-block check)
+                // — a partial that fails to answer the challenge is
+                // rejected 9400
                 let content_id = format!("chunk-{i}");
                 partial.attachments = vec![OutAttachment {
                     content_id: content_id.clone(),
@@ -588,7 +588,8 @@ impl NativeClient {
                 if i == total_chunks {
                     last_signed = dialog.last_response_report().is_some();
                 }
-                Self::advance_state(dialog);
+                // NB: no advance between partials — the manager echoes
+                // SequenceNumber="0" for every chunk of the sequence
                 Self::verify_transport_signature(capture)?;
             }
 
@@ -958,8 +959,19 @@ impl NativeClient {
     ///    response without the attribute resets the counter to the -1
     ///    sentinel (next message sends 0).
     fn advance_state(dialog: &mut Dialog) {
+        // the outbound Response answers the peer's newest challenge...
         let challenge = dialog.control_block.challenge.clone();
         dialog.control_block.response = challenge;
+        // ...and our own outbound Challenge is a FRESH random value — the
+        // reference client never replays the peer's challenge as its own
+        // (the live intermediary rejects the duplicate with 9300 on
+        // partial deliveries)
+        {
+            use rand::RngCore as _;
+            let mut bytes = [0u8; 16];
+            rand::thread_rng().fill_bytes(&mut bytes);
+            dialog.control_block.challenge = Some(base64::encode(&bytes));
+        }
         // u32 in the control-block model; the reference's -1 sentinel maps
         // to "start counting at zero" (wrapping add, no panic)
         dialog.control_block.sequence_number = Some(

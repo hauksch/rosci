@@ -652,6 +652,9 @@ fn chunked_send_round_trips_through_the_postbox() {
         DEMO_PIN,
     )
     .args(["--chunk-size-kb", "1024"])
+    // the live demulator processes each ~1MB partial for tens of seconds;
+    // three chunks + reassembly comfortably exceed the 120s default
+    .timeout(Duration::from_secs(420))
     .assert()
     .success()
     .get_output()
