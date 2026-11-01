@@ -323,22 +323,17 @@ impl NativeClient {
         // GetMessageId opens the dialog carrying Challenge + seq 0 + the
         // FeatureDescription, no Response/ConversationId.
         let mut get_id = self.base_message(MessageType::GetMessageId, None);
-        // GetMessageId is a dialog-opening request: its ControlBlock
-        // carries Challenge + SequenceNumber and PROHIBITS the Response
-        // element (the live manager rejects Response-carrying GetMessageIds
-        // with 9400, while store/fetch/partial requests REQUIRE the
-        // Response answering the previous challenge — per the reference
-        // parser's per-kind check flags)
-        get_id.control_block.response = None;
         if chunk_size_kb.is_some() {
-            // EFFI announcement on the dialog opener (the FD form matches
-            // the reference exactly: feature list, no chunk-size attrs)
+            get_id.control_block.sequence_number = Some(0);
+            get_id.control_block.response = None;
+            get_id.control_block.conversation_id = None;
             get_id.feature_description = Some(chunk_feature_description());
         }
         let rsp = dialog
             .send(&mut get_id, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&rsp)?;
+        Self::advance_state(&mut dialog);
         Self::verify_transport_signature(&capture)?;
         // The id rides in the response entry; oscirs only fills
         // `request` from a nested echoed request element, which real
@@ -501,9 +496,6 @@ impl NativeClient {
         message_id: String,
         _subject: Option<&str>,
     ) -> Result<Receipt, Error> {
-        // dialog sequencing is chained by oscirs's prepare_outbound
-        // (Response answers the peer's last challenge, fresh outbound
-        // Challenge, sequence increments per request)
         if let Some(chunk_kb) = chunk_size_kb.filter(|kb| *kb > 0) {
             // EFFI chunked transfer: compose + encrypt + sign the COMPLETE
             // StoreDelivery, split it, and ship each chunk as a
@@ -527,20 +519,9 @@ impl NativeClient {
                 store.containers.push(container);
             }
 
-            // The full stream is composed+signed on a THROWAWAY dialog:
-            // compose_signed_stream consumes one sequence step and one
-            // challenge round, and those belong to the live dialog's
-            // partials — a compose on the live dialog would leave partial
-            // #1 answering a challenge the manager never issued (9400).
-            // The full stream also carries its OWN boundary: the chunk
-            // blobs contain its MIME markers, which must not collide with
-            // the outer partial framing.
-            let (mut throwaway, _) = self.dialog()?;
-            let full_boundary = format!("FULL_{boundary}");
-            let full = throwaway
-                .compose_signed_stream(store, sign_attachments, &full_boundary)
+            let full = dialog
+                .compose_signed_stream(store, sign_attachments, boundary)
                 .map_err(native_error)?;
-            drop(throwaway);
             let chunk_bytes = (chunk_kb as usize) * 1024;
             let total_chunks = full.len().div_ceil(chunk_bytes).max(1);
             let total_kb = full.len().div_ceil(1024);
@@ -571,6 +552,11 @@ impl NativeClient {
                 });
                 // the partial schemas mandate the FeatureDescription
                 partial.feature_description = Some(chunk_feature_description());
+                // the partial continues the dialog: ConversationId
+                // (adopted) + Response answering the manager's latest
+                // challenge (both adopted by oscirs's control-block check)
+                // — a partial that fails to answer the challenge is
+                // rejected 9400
                 let content_id = format!("chunk-{i}");
                 partial.attachments = vec![OutAttachment {
                     content_id: content_id.clone(),
@@ -638,6 +624,7 @@ impl NativeClient {
                 .map_err(native_error)?
         };
         check_feedback(&response)?;
+        Self::advance_state(dialog);
         Self::verify_transport_signature(capture)?;
         // oscirs's dialog verifies the response signature by policy
         // (VerifyIfPresent) and errors on tampering; the report's presence
@@ -688,6 +675,7 @@ impl NativeClient {
                 .send(&mut fetch, &[], &boundary())
                 .map_err(native_error)?;
             check_feedback(&response)?;
+            Self::advance_state(&mut dialog);
             Self::verify_transport_signature(&capture)?;
             capture.lock().unwrap_or_else(|p| p.into_inner()).clone()
         };
@@ -774,6 +762,7 @@ impl NativeClient {
             .send(&mut card, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&response)?;
+        Self::advance_state(&mut dialog);
         Self::verify_transport_signature(&capture)?;
 
         // The spec nests the MessageId inside each osci:ProcessCard; the
@@ -894,6 +883,7 @@ impl NativeClient {
                 .send(&mut partial, &[], &boundary())
                 .map_err(native_error)?;
             check_feedback(&response)?;
+            Self::advance_state(dialog);
 
             match response.kind {
                 // smaller than one chunk: a plain response — its stream is
@@ -953,7 +943,44 @@ impl NativeClient {
         dialog
             .send(&mut init, &[], &boundary())
             .map_err(native_error)?;
+        Self::advance_state(dialog);
         Ok(())
+    }
+
+    /// Advances the dialog state to what the NEXT outgoing message must
+    /// carry. Two corrections to oscirs's echo-model, both per the
+    /// reference library's DialogHandler:
+    ///
+    /// 1. the outbound `Response` element must answer the peer's NEWEST
+    ///    challenge (the adopted state keeps the peer's answer to our
+    ///    previous one — real intermediaries verify and reject with 9400);
+    /// 2. the sequence counter increments per outgoing message
+    ///    (`setSequenceNumber(cb.getSequenceNumber() + 1)`), where a
+    ///    response without the attribute resets the counter to the -1
+    ///    sentinel (next message sends 0).
+    fn advance_state(dialog: &mut Dialog) {
+        // the outbound Response answers the peer's newest challenge...
+        let challenge = dialog.control_block.challenge.clone();
+        dialog.control_block.response = challenge;
+        // ...and our own outbound Challenge is a FRESH random value — the
+        // reference client never replays the peer's challenge as its own
+        // (the live intermediary rejects the duplicate with 9300 on
+        // partial deliveries)
+        {
+            use rand::RngCore as _;
+            let mut bytes = [0u8; 16];
+            rand::thread_rng().fill_bytes(&mut bytes);
+            dialog.control_block.challenge = Some(base64::encode(&bytes));
+        }
+        // u32 in the control-block model; the reference's -1 sentinel maps
+        // to "start counting at zero" (wrapping add, no panic)
+        dialog.control_block.sequence_number = Some(
+            dialog
+                .control_block
+                .sequence_number
+                .unwrap_or(u32::MAX)
+                .wrapping_add(1),
+        );
     }
 
     /// Verifies the response's TRANSPORT signature — the intermediary's
