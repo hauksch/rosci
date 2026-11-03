@@ -134,7 +134,7 @@
       <plugin>
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
-        <version>0.8.15</version>
+        <version>0.8.16</version>
         <dependencies>
           <!-- jacoco ships plexus-utils 3.0.24 (directory traversal, fixed in
                3.6.1) as a direct dependency and has never bumped it — the
