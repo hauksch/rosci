@@ -143,6 +143,16 @@ impl CapturingTransport {
     }
 }
 
+/// Never sends anything: the scratch composer only signs and composes
+/// locally, and a send against it is a programming error.
+struct ScratchTransport;
+
+impl Transport for ScratchTransport {
+    fn send(&self, _message: &[u8]) -> Result<Vec<u8>, TransportError> {
+        Err(TransportError::new("scratch transport cannot send"))
+    }
+}
+
 impl Transport for CapturingTransport {
     fn send(&self, message: &[u8]) -> Result<Vec<u8>, TransportError> {
         if std::env::var_os("ROSCI_DEBUG").is_some() {
@@ -165,6 +175,15 @@ impl Transport for CapturingTransport {
             }
         }
         let response = self.inner.send(message)?;
+        if let Some(dir) = std::env::var_os("ROSCI_DEBUG_DIR") {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static SEQ: AtomicUsize = AtomicUsize::new(0);
+            let n = SEQ.fetch_add(1, Ordering::Relaxed);
+            let _ = std::fs::write(
+                std::path::PathBuf::from(&dir).join(format!("response-{n}.osci")),
+                &response,
+            );
+        }
         if std::env::var_os("ROSCI_DEBUG").is_some() {
             eprintln!(
                 "ROSCI_DEBUG: response status ok, {} bytes:\n{}",
@@ -325,19 +344,42 @@ impl NativeClient {
             sign: _sign,
             encrypt,
         } = request;
-        let (mut dialog, capture) = self.dialog()?;
+        // Reference transport dialect (live-probe req1): the InitDialog
+        // goes out PLAIN and everything after it is enveloped — the
+        // manager keys the session's transport mode off the first
+        // exchange, answering the plain Init with an encrypted response
+        // whose crypto the client mirrors.
+        let (mut dialog, capture) = self.dialog_opts(chunk_size_kb.is_none())?;
 
-        // The reference client's CHUNKED flow (wire-verified against the
-        // live intermediary via the Java bridge): NO InitDialog — the
-        // GetMessageId opens the dialog. On a fresh dialog oscirs's
-        // outbound state produces exactly the live-validated shape:
-        // Challenge + seq 0, no Response, no ConversationId.
+        // The CHUNKED flow runs over ONE EXPLICIT dialog: InitDialog
+        // first, and the Init carries the FeatureDescription announcing
+        // the EFFI capability (PartialMessageTransmission et al) — the
+        // GetId (the reservation) announces it too. The plain flow stays
+        // implicit: the GetMessageId opens it, oscirs's per-request reset
+        // gives it Challenge + seq 0 and no Response/ConversationId (the
+        // bridge-era wire shape).
+        if chunk_size_kb.is_some() {
+            let mut init = self.base_message(MessageType::InitDialog, None);
+            init.feature_description = Some(chunk_feature_description());
+            dialog
+                .send(&mut init, &[], &fresh_boundary())
+                .map_err(native_error)?;
+            if !self.insecure_transport {
+                dialog.set_transport_encryption(
+                    Some(parse_certificate(&self.intermediary.cipher_cert)?),
+                    EncryptConfig::default(),
+                );
+            }
+        }
         let mut get_id = self.base_message(MessageType::GetMessageId, None);
+        // the reservation is created here — the reference announces the
+        // EFFI capability on the GetId too (live-probe req2), and the
+        // manager keys the partial session off it
         if chunk_size_kb.is_some() {
             get_id.feature_description = Some(chunk_feature_description());
         }
         let rsp = dialog
-            .send(&mut get_id, &[], &boundary())
+            .send(&mut get_id, &[], &fresh_boundary())
             .map_err(native_error)?;
         check_feedback(&rsp)?;
         Self::verify_transport_signature(&capture)?;
@@ -463,7 +505,7 @@ impl NativeClient {
             })
             .collect();
 
-        let boundary = boundary();
+        let boundary = fresh_boundary();
         let result = self.send_delivery(
             &mut dialog,
             &capture,
@@ -525,12 +567,20 @@ impl NativeClient {
                 store.containers.push(container);
             }
 
-            let full = dialog
+            // The FULL delivery (content-encrypted + signed) is composed
+            // on a THROWAWAY dialog: the compose advances dialog state (a
+            // challenge round and a sequence step) that no manager ever
+            // sees — the live dialog's steps belong to the partial
+            // exchanges alone.
+            let full = self
+                .scratch_composer()
                 .compose_signed_stream(store, sign_attachments, boundary)
                 .map_err(native_error)?;
+            // Reference ChunkHelper: the split happens at ChunkSize*1024
+            // bytes; TotalMessageSize is reported in WHOLE KB, floored.
             let chunk_bytes = (chunk_kb as usize) * 1024;
             let total_chunks = full.len().div_ceil(chunk_bytes).max(1);
-            let total_kb = full.len().div_ceil(1024);
+            let total_kb = full.len() / 1024;
             let mut last_feedback: Vec<Vec<String>> = Vec::new();
             let mut last_signed = false;
             for i in 1..=total_chunks {
@@ -540,13 +590,12 @@ impl NativeClient {
 
                 let mut partial =
                     self.base_message(MessageType::PartialStoreDelivery, Some(recipient));
-                // the reference appends "_Partial" to the MessageId IN
-                // ITS WIRE FORM (still base64) and base64-encodes the
-                // result — double-encoded on the wire (compose oracle)
-                // message_id is the DECODED form; the wire form is its
-                // base64 — the reference starts from THAT
-                let wire_id = base64::encode(message_id.as_bytes());
-                let partial_id = base64::encode(format!("{wire_id}_Partial").as_bytes());
+                // Live-accepted partial dialect (testcorpus
+                // PartialStoreDelivery.osci): the MessageId carries the
+                // reserved id with "_Partial" appended in its DECODED
+                // form, base64-encoded ONCE — the double encoding is an
+                // oracle-repro artifact, not the wire form.
+                let partial_id = base64::encode(format!("{message_id}_Partial").as_bytes());
                 partial.entry_inner =
                     Some(format!("<osci:MessageId>{partial_id}</osci:MessageId>"));
                 partial.chunk_information = Some(osci_core::message::ChunkInformation {
@@ -558,32 +607,48 @@ impl NativeClient {
                 });
                 // the partial schemas mandate the FeatureDescription
                 partial.feature_description = Some(chunk_feature_description());
-                // the partial continues the dialog: ConversationId
-                // (adopted) + Response answering the manager's latest
-                // challenge (both adopted by oscirs's control-block check)
-                // — a partial that fails to answer the challenge is
-                // rejected 9400
-                let content_id = format!("chunk-{i}");
+                // The partial continues the EXPLICIT dialog the InitDialog
+                // opened: oscirs's outbound state carries the adopted
+                // ConversationId, answers the manager's latest challenge
+                // and steps the sequence — a partial failing any of the
+                // three is rejected 9400.
+                let blob_id = "ChunkBlobStoreDelivery";
                 partial.attachments = vec![OutAttachment {
-                    content_id: content_id.clone(),
+                    content_id: blob_id.to_string(),
+                    // the reference's chunk carrier (PartialOneWayMessage
+                    // sample, chunkedexchange captures)
                     content_type: "application/octet-stream".to_string(),
                     base64_encoding: false,
                     data: blob.clone(),
                 }];
-                // the reference mandates exactly ONE ContentContainer in
-                // the body, whose Content references the chunk blob
+                // The reference mandates exactly ONE ContentContainer in
+                // the body with the fixed chunk ids (live-accepted
+                // fixture), whose Content references the chunk blob.
                 partial.containers.push(OutContentContainer {
-                    id: "chunkcarrier".to_string(),
+                    id: "ChunkContentContainer".to_string(),
                     contents: vec![OutContent {
-                        id: format!("content-{i}"),
+                        id: "ChunkContent".to_string(),
                         text: None,
-                        href: Some(format!("cid:{content_id}")),
+                        href: Some(format!("cid:{blob_id}")),
                     }],
                     encrypted_attachments: Vec::new(),
                 });
 
+                // A FRESH boundary per partial: the slice CARRIES bytes of
+                // the full delivery (its preamble, XML part and payload
+                // part headers included). If the partial's boundary equals
+                // the full delivery's, the intermediary's MIME parser
+                // splits the partial at the embedded boundary and reads
+                // the full delivery's parts as its order data — fault
+                // 9300 "Auftragsdaten stellen keinen gültigen Auftrag
+                // dar". Different strings make the slice opaque.
+                let chunk_boundary = fresh_boundary();
                 let chunk_response = dialog
-                    .send(&mut partial, &[(content_id, blob)], boundary)
+                    .send(
+                        &mut partial,
+                        &[(blob_id.to_string(), blob)],
+                        &chunk_boundary,
+                    )
                     .map_err(native_error)?;
                 check_feedback(&chunk_response)?;
                 // the reassembled delivery's verdict arrives as INSIDE
@@ -679,7 +744,7 @@ impl NativeClient {
                 fetch.selection_rule = Some(base64::encode(rule.as_bytes()));
             }
             let response = dialog
-                .send(&mut fetch, &[], &boundary())
+                .send(&mut fetch, &[], &fresh_boundary())
                 .map_err(native_error)?;
             check_feedback(&response)?;
             Self::verify_transport_signature(&capture)?;
@@ -765,7 +830,7 @@ impl NativeClient {
         let mut card = self.base_message(MessageType::FetchProcessCard, None);
         card.selection_rule = Some(message_id.to_string());
         let response = dialog
-            .send(&mut card, &[], &boundary())
+            .send(&mut card, &[], &fresh_boundary())
             .map_err(native_error)?;
         check_feedback(&response)?;
         Self::verify_transport_signature(&capture)?;
@@ -810,6 +875,14 @@ impl NativeClient {
     /// unless test mode turned it off. The capture handle hands back the
     /// last raw response.
     fn dialog(&self) -> Result<(Dialog, ResponseCapture), Error> {
+        self.dialog_opts(true)
+    }
+
+    /// Like [`Self::dialog`], with the initial transport-encryption state
+    /// configurable: the chunked flow starts its dialog with a PLAIN
+    /// InitDialog (reference dialect, live-probe req1) and switches the
+    /// envelope on after the Init via `Dialog::set_transport_encryption`.
+    fn dialog_opts(&self, transport_encrypt: bool) -> Result<(Dialog, ResponseCapture), Error> {
         let transport = HttpTransport::new(HttpTransportConfig {
             endpoint: self.intermediary.url.clone(),
             timeout_ms: self.timeout_ms,
@@ -842,13 +915,27 @@ impl NativeClient {
         // on STORED messages are per-message verdicts, not exchange-fatal
         // (Java bridge: signaturesValidQuietly)
         dialog.set_signature_policy(oci::dialog::SignaturePolicy::Ignore);
-        if !self.insecure_transport {
+        if !self.insecure_transport && transport_encrypt {
             dialog = dialog.with_transport_encryption(
                 parse_certificate(&self.intermediary.cipher_cert)?,
                 EncryptConfig::default(),
             );
         }
         Ok((dialog, capture))
+    }
+
+    /// A throwaway dialog for `compose_signed_stream` — same signer as
+    /// the live one, never used for a send: the compose advances dialog
+    /// state, and on the live dialog that would burn a challenge round
+    /// and a sequence step no manager ever saw.
+    fn scratch_composer(&self) -> Dialog {
+        let signer = P12Signer::new((*self.signer_keypair).clone(), None);
+        let signature_id = cert_entry_id(
+            "originator",
+            "signature",
+            self.signer_keypair.certificate().der(),
+        );
+        Dialog::new(Box::new(ScratchTransport)).with_signer(Box::new(signer), signature_id)
     }
 
     /// The shared outbound skeleton: languages, our certificates.
@@ -885,7 +972,7 @@ impl NativeClient {
             });
 
             let response = dialog
-                .send(&mut partial, &[], &boundary())
+                .send(&mut partial, &[], &fresh_boundary())
                 .map_err(native_error)?;
             check_feedback(&response)?;
             Self::verify_transport_signature(capture)?;
@@ -946,7 +1033,7 @@ impl NativeClient {
     fn open_dialog(&self, dialog: &mut Dialog) -> Result<(), Error> {
         let mut init = self.base_message(MessageType::InitDialog, None);
         dialog
-            .send(&mut init, &[], &boundary())
+            .send(&mut init, &[], &fresh_boundary())
             .map_err(native_error)?;
         Ok(())
     }
@@ -1005,7 +1092,7 @@ impl NativeClient {
     /// intermediary while this process lives on. Errors are swallowed.
     fn exit_dialog_quietly(&self, dialog: &mut Dialog) {
         let mut exit = self.base_message(MessageType::ExitDialog, None);
-        let _ = dialog.send(&mut exit, &[], &boundary());
+        let _ = dialog.send(&mut exit, &[], &fresh_boundary());
     }
 
     /// The shared outbound skeleton: languages plus the certificate set
@@ -1380,11 +1467,14 @@ fn certificate_der(input: &str) -> Option<Vec<u8>> {
     base64::decode(&clean).ok()
 }
 
-/// Fresh MIME boundary; composed parts are base64/inline XML so collisions
-/// are nigh-impossible already, but randomness is cheaper than confidence.
-fn boundary() -> String {
+/// Fresh MIME boundary. Hex characters only — EFFI chunk slices carry
+/// the boundary name through the intermediary's slice pre-parser, and
+/// base64's `+ / =` upset strict parsers there (the reference library
+/// also keeps its `MIME_boundary_` prefix alphanumeric).
+fn fresh_boundary() -> String {
     use rand::RngCore as _;
-    let mut bytes = [0u8; 16];
+    let mut bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut bytes);
-    format!("rosci={}", base64::encode(&bytes))
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!("MIME_boundary_rosci_{hex}")
 }
