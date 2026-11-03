@@ -966,7 +966,10 @@ impl NativeClient {
             partial.chunk_information = Some(osci_core::message::ChunkInformation {
                 chunk_number,
                 chunk_size: Some(chunk_kb as i64),
-                total_chunk_numbers: total,
+                // TotalChunkNumbers is a RESPONSE-side field — the fetch
+                // request schema forbids it; how many chunks exist is
+                // learned from the responses (the stop condition below)
+                total_chunk_numbers: None,
                 total_message_size: None,
                 received_chunks: received.clone(),
             });
@@ -1154,10 +1157,12 @@ impl NativeClient {
                     self.signer_keypair.certificate().der(),
                 ),
             ],
-            // exit/fetch/process-card: signature certificate only
+            // exit/fetch/process-card: signature certificate only (the
+            // partial-fetch schema likewise forbids the cipher entry)
             MessageType::ExitDialog
             | MessageType::FetchDelivery
-            | MessageType::FetchProcessCard => {
+            | MessageType::FetchProcessCard
+            | MessageType::PartialFetchDelivery => {
                 vec![cert_entry(
                     CertRole::Originator,
                     CertUse::Signature,
