@@ -147,6 +147,12 @@ impl Transport for CapturingTransport {
     fn send(&self, message: &[u8]) -> Result<Vec<u8>, TransportError> {
         if std::env::var_os("ROSCI_DEBUG").is_some() {
             let text = String::from_utf8_lossy(message);
+            // every request: the control block we actually sent
+            if let Some(start) = text.find("<osci:ControlBlock") {
+                let end = (start + 600).min(text.len());
+                eprintln!("ROSCI_DEBUG: request control block:\n{}", &text[start..end]);
+            }
+            // partials: the full request XML (chunk dialect debugging)
             if text.contains("partialStoreDelivery") && text.contains("<osci:Subject") {
                 let from = text.find("<?xml").unwrap_or(0);
                 let to = text
@@ -291,7 +297,10 @@ impl NativeClient {
                 crate::protocol::PROTOCOL_VERSION.to_string(),
             ),
             ("bridge".to_string(), env!("CARGO_PKG_VERSION").to_string()),
-            ("library".to_string(), "oscirs 9fa178f (native)".to_string()),
+            (
+                "library".to_string(),
+                format!("oscirs {} (native)", oci::VERSION),
+            ),
             ("provider".to_string(), "RustCrypto".to_string()),
         ])
     }
@@ -320,20 +329,17 @@ impl NativeClient {
 
         // The reference client's CHUNKED flow (wire-verified against the
         // live intermediary via the Java bridge): NO InitDialog — the
-        // GetMessageId opens the dialog carrying Challenge + seq 0 + the
-        // FeatureDescription, no Response/ConversationId.
+        // GetMessageId opens the dialog. On a fresh dialog oscirs's
+        // outbound state produces exactly the live-validated shape:
+        // Challenge + seq 0, no Response, no ConversationId.
         let mut get_id = self.base_message(MessageType::GetMessageId, None);
         if chunk_size_kb.is_some() {
-            get_id.control_block.sequence_number = Some(0);
-            get_id.control_block.response = None;
-            get_id.control_block.conversation_id = None;
             get_id.feature_description = Some(chunk_feature_description());
         }
         let rsp = dialog
             .send(&mut get_id, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&rsp)?;
-        Self::advance_state(&mut dialog);
         Self::verify_transport_signature(&capture)?;
         // The id rides in the response entry; oscirs only fills
         // `request` from a nested echoed request element, which real
@@ -588,8 +594,10 @@ impl NativeClient {
                 if i == total_chunks {
                     last_signed = dialog.last_response_report().is_some();
                 }
-                // NB: no advance between partials — the manager echoes
-                // SequenceNumber="0" for every chunk of the sequence
+                // oscirs advances the dialog per send: each partial answers
+                // the manager's LATEST challenge with a fresh own one and
+                // the sequence steps 1, 2, … — the reference client's
+                // chunked dialect (chunkedexchange oracle).
                 Self::verify_transport_signature(capture)?;
             }
 
@@ -624,7 +632,6 @@ impl NativeClient {
                 .map_err(native_error)?
         };
         check_feedback(&response)?;
-        Self::advance_state(dialog);
         Self::verify_transport_signature(capture)?;
         // oscirs's dialog verifies the response signature by policy
         // (VerifyIfPresent) and errors on tampering; the report's presence
@@ -675,7 +682,6 @@ impl NativeClient {
                 .send(&mut fetch, &[], &boundary())
                 .map_err(native_error)?;
             check_feedback(&response)?;
-            Self::advance_state(&mut dialog);
             Self::verify_transport_signature(&capture)?;
             capture.lock().unwrap_or_else(|p| p.into_inner()).clone()
         };
@@ -762,7 +768,6 @@ impl NativeClient {
             .send(&mut card, &[], &boundary())
             .map_err(native_error)?;
         check_feedback(&response)?;
-        Self::advance_state(&mut dialog);
         Self::verify_transport_signature(&capture)?;
 
         // The spec nests the MessageId inside each osci:ProcessCard; the
@@ -883,7 +888,7 @@ impl NativeClient {
                 .send(&mut partial, &[], &boundary())
                 .map_err(native_error)?;
             check_feedback(&response)?;
-            Self::advance_state(dialog);
+            Self::verify_transport_signature(capture)?;
 
             match response.kind {
                 // smaller than one chunk: a plain response — its stream is
@@ -943,44 +948,7 @@ impl NativeClient {
         dialog
             .send(&mut init, &[], &boundary())
             .map_err(native_error)?;
-        Self::advance_state(dialog);
         Ok(())
-    }
-
-    /// Advances the dialog state to what the NEXT outgoing message must
-    /// carry. Two corrections to oscirs's echo-model, both per the
-    /// reference library's DialogHandler:
-    ///
-    /// 1. the outbound `Response` element must answer the peer's NEWEST
-    ///    challenge (the adopted state keeps the peer's answer to our
-    ///    previous one — real intermediaries verify and reject with 9400);
-    /// 2. the sequence counter increments per outgoing message
-    ///    (`setSequenceNumber(cb.getSequenceNumber() + 1)`), where a
-    ///    response without the attribute resets the counter to the -1
-    ///    sentinel (next message sends 0).
-    fn advance_state(dialog: &mut Dialog) {
-        // the outbound Response answers the peer's newest challenge...
-        let challenge = dialog.control_block.challenge.clone();
-        dialog.control_block.response = challenge;
-        // ...and our own outbound Challenge is a FRESH random value — the
-        // reference client never replays the peer's challenge as its own
-        // (the live intermediary rejects the duplicate with 9300 on
-        // partial deliveries)
-        {
-            use rand::RngCore as _;
-            let mut bytes = [0u8; 16];
-            rand::thread_rng().fill_bytes(&mut bytes);
-            dialog.control_block.challenge = Some(base64::encode(&bytes));
-        }
-        // u32 in the control-block model; the reference's -1 sentinel maps
-        // to "start counting at zero" (wrapping add, no panic)
-        dialog.control_block.sequence_number = Some(
-            dialog
-                .control_block
-                .sequence_number
-                .unwrap_or(u32::MAX)
-                .wrapping_add(1),
-        );
     }
 
     /// Verifies the response's TRANSPORT signature — the intermediary's

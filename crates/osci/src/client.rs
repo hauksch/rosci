@@ -82,8 +82,8 @@ impl OsciClient {
     }
 
     /// Fetch with EFFI partial fetch (KB per chunk) — for messages that
-    /// were stored chunked. Not yet supported by the native stack; the
-    /// error names it.
+    /// were stored chunked. A message smaller than one chunk arrives as a
+    /// plain fetch response on round one.
     pub fn fetch_with(
         &mut self,
         query: FetchQuery,

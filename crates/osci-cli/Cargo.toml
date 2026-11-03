@@ -10,7 +10,7 @@ name = "rosci"
 path = "src/main.rs"
 
 [dependencies]
-osci = { path = "../osci" }
+rosci = { path = "../osci" }
 base64 = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 zeroize = { workspace = true }

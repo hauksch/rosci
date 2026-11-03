@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
-osci = { path = "../crates/osci" }
+rosci = { path = "../crates/osci" }
 
 [[bin]]
 name = "dto_json_parse"

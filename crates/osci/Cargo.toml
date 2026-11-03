@@ -1,9 +1,17 @@
 [package]
-name = "osci"
-description = "Modern Rust API around the Governikus OSCI-Transport-1.2 Java library — the curl of OSCI."
+# Package name `rosci` (not `osci`): the oscirs stack it wraps ships a crate
+# literally named `osci`, and cargo cannot hold two same-named path packages
+# in one graph — the iteration [patch] needs both. The LIBRARY name stays
+# `osci`, so every `use osci::…` in dependents and tests is unchanged.
+name = "rosci"
+description = "Modern Rust API around the OSCI 1.2 transport — the curl of OSCI, backed by the native oscirs stack."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[lib]
+name = "osci"
+path = "src/lib.rs"
 
 [dependencies]
 # OSCI-Rust-Rewrite stack (dialogs, message compose/parse, crypto, transport).
