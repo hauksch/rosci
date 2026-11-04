@@ -130,18 +130,22 @@ impl Identity {
     }
 }
 
-/// TLS knobs passed straight through to the bridge transport.
+/// TLS knobs for the native transport: trust anchors and mutual-TLS
+/// client identity, parsed and applied at builder time.
 #[derive(Clone, Default)]
 pub struct Tls {
-    /// Additional trust anchors (PEM / base64 DER). Empty = system store.
+    /// Trust anchors (PEM or base64 DER). Non-empty REPLACES the default
+    /// root set — for intermediaries under a self-managed CA.
     pub trust_anchors: Vec<String>,
-    /// TLS client authentication bundle (base64 PKCS#12).
+    /// TLS client authentication bundle (base64 PKCS#12); its leaf
+    /// certificate chain and private key become the client identity.
     pub client_p12_b64: Option<String>,
     /// PIN for the TLS client bundle.
     pub client_pin: Option<Zeroizing<String>>,
-    /// TCP connect timeout in milliseconds.
+    /// TCP connect timeout in milliseconds (reserved; the native
+    /// transport applies one global request timeout).
     pub connect_timeout_ms: Option<u64>,
-    /// Socket read timeout in milliseconds.
+    /// Socket read timeout in milliseconds (reserved; ditto).
     pub read_timeout_ms: Option<u64>,
 }
 

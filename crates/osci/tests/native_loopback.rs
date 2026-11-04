@@ -298,6 +298,7 @@ fn native_send_roundtrip_with_full_crypto() {
         &Identity::from_p12_b64(base64::encode(&signer_p12), PIN, None, None).unwrap(),
         std::time::Duration::from_secs(30),
         false, // full crypto: transport envelope encrypted to the intermediary cert
+        Default::default(),
     )
     .unwrap();
 
@@ -336,6 +337,7 @@ fn version_info_reports_protocol_and_bridge() {
         &Identity::from_p12_b64(base64::encode(b"garbage"), PIN, None, None).unwrap(),
         std::time::Duration::from_secs(1),
         false,
+        Default::default(),
     );
     // construction fails on garbage keystore — versions() needs no client
     assert!(

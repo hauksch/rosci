@@ -220,12 +220,40 @@ impl OsciClientBuilder {
             .identity
             .ok_or_else(|| Error::Config("identity (signer PKCS#12) is required".to_string()))?;
 
-        if !self.tls.trust_anchors.is_empty() || self.tls.client_p12_b64.is_some() {
-            return Err(Error::Config(
-                "TLS trust anchors / client certificates are not supported by the native \
-                 transport yet"
-                    .into(),
-            ));
+        // TLS: trust anchors REPLACE the default roots (self-managed
+        // intermediary CAs); the client bundle becomes the mutual-TLS
+        // identity. Parsed here, loudly, exactly like the identity.
+        let mut tls_roots = Vec::new();
+        for anchor in &self.tls.trust_anchors {
+            let der = crate::native::certificate_der(anchor)
+                .ok_or_else(|| Error::Config("unparseable TLS trust anchor".to_string()))?;
+            tls_roots.push(der);
+        }
+        let mut tls_client_chain = Vec::new();
+        let mut tls_client_key_pem = String::new();
+        if let Some(p12_b64) = &self.tls.client_p12_b64 {
+            let pin = self
+                .tls
+                .client_pin
+                .as_ref()
+                .ok_or_else(|| Error::Config("tls.client_pin is required with client_p12_b64".into()))?;
+            let der = base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                p12_b64.trim(),
+            )
+            .map_err(|e| Error::Config(format!("tls.client_p12_b64 is not base64: {e}")))?;
+            let keypair = crate::p12::P12Keypair::parse(&der, pin.as_str())?;
+            tls_client_chain = keypair
+                .chain()
+                .iter()
+                .map(|c| c.der().to_vec())
+                .collect();
+            use rsa::pkcs8::EncodePrivateKey;
+            let key_der = keypair
+                .key()
+                .to_pkcs8_der()
+                .map_err(|e| Error::Config(format!("tls client key not PKCS#8-encodable: {e}")))?;
+            tls_client_key_pem = pem_wrap("PRIVATE KEY", key_der.as_bytes());
         }
 
         let native = NativeClient::new(
@@ -233,6 +261,11 @@ impl OsciClientBuilder {
             &identity,
             self.timeout,
             self.insecure_transport,
+            osci_transport::http::HttpTransportTls {
+                root_certs: tls_roots,
+                client_chain: tls_client_chain,
+                client_key_pem: tls_client_key_pem,
+            },
         )?;
 
         Ok(OsciClient { native })
@@ -431,6 +464,22 @@ pub fn url_host_is_loopback(url: &str) -> bool {
             .iter()
             .all(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_digit()))
 }
+
+
+/// DER bytes as a single-line-label PEM document (the wire format the
+/// TLS stack expects for client keys and anchors).
+fn pem_wrap(label: &str, der: &[u8]) -> String {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+    let mut out = format!("-----BEGIN {label}-----\n");
+    for chunk in b64.as_bytes().chunks(64) {
+        out.push_str(std::str::from_utf8(chunk).unwrap_or_default());
+        out.push('\n');
+    }
+    out.push_str(&format!("-----END {label}-----\n"));
+    out
+}
+
 
 #[cfg(test)]
 mod loopback_tests {

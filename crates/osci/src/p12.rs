@@ -76,6 +76,12 @@ impl P12Keypair {
         &self.certificate
     }
 
+    /// The signing/decryption private key (for TLS client identity
+    /// export, which needs PKCS#8).
+    pub fn key(&self) -> &rsa::RsaPrivateKey {
+        &self.key
+    }
+
     /// The certificate chain, leaf first.
     pub fn chain(&self) -> &[Certificate] {
         &self.chain

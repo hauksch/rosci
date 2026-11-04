@@ -273,6 +273,8 @@ pub struct NativeClient {
     timeout_ms: u64,
     /// Test mode: skip transport-level encryption toward the intermediary.
     insecure_transport: bool,
+    /// TLS trust anchors and mutual-TLS client identity (DER/PEM).
+    tls: osci_transport::http::HttpTransportTls,
 }
 
 impl std::fmt::Debug for NativeClient {
@@ -293,6 +295,7 @@ impl NativeClient {
         identity: &Identity,
         response_timeout: std::time::Duration,
         insecure_transport: bool,
+        tls: osci_transport::http::HttpTransportTls,
     ) -> Result<Self, Error> {
         let (signer_p12, signer_pin) = identity.signer_material()?;
         let (decrypter_p12, decrypter_pin) = identity.decrypter_material()?;
@@ -303,6 +306,7 @@ impl NativeClient {
             decrypter_keypair: Arc::new(P12Keypair::parse(&decrypter_p12, &decrypter_pin)?),
             timeout_ms: u64::try_from(response_timeout.as_millis()).unwrap_or(u64::MAX),
             insecure_transport,
+            tls,
         })
     }
 
@@ -886,6 +890,7 @@ impl NativeClient {
         let transport = HttpTransport::new(HttpTransportConfig {
             endpoint: self.intermediary.url.clone(),
             timeout_ms: self.timeout_ms,
+            tls: self.tls.clone(),
             ..Default::default()
         })
         .map_err(|e| Error::Bridge {
@@ -1458,7 +1463,7 @@ fn parse_certificate(pem_or_b64: &str) -> Result<Certificate, Error> {
 }
 
 /// Extracts the DER bytes from a PEM block or a bare base64 blob.
-fn certificate_der(input: &str) -> Option<Vec<u8>> {
+pub(crate) fn certificate_der(input: &str) -> Option<Vec<u8>> {
     let begin = "-----BEGIN CERTIFICATE-----";
     let end = "-----END CERTIFICATE-----";
     let b64: String = if let Some(start) = input.find(begin) {
