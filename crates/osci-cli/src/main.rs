@@ -46,7 +46,7 @@ enum Cmd {
     Status(StatusArgs),
     /// Look up recipients in a DVDV extract.
     Dvdv(DvdvArgs),
-    /// Print local and bridge version info.
+    /// Print version info for the binary, wire protocol and stack.
     Version(VersionArgs),
 }
 
@@ -603,10 +603,9 @@ fn cmd_dvdv(args: DvdvArgs) -> Result<(), Error> {
 
 fn cmd_version(_args: VersionArgs) -> Result<(), Error> {
     println!("rosci      {}", env!("CARGO_PKG_VERSION"));
-    // The stack is native now; the version table is local, no dialog,
-    // no keystores.
+    // The version table is local: no dialog, no keystores.
     println!("protocol   {}", osci::protocol::PROTOCOL_VERSION);
-    println!("library    oscirs (native)");
+    println!("library    {}", osci::library_version());
     Ok(())
 }
 

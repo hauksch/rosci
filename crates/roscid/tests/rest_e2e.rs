@@ -118,16 +118,10 @@ fn setup() -> Option<Smoke> {
 }
 
 /// Spawns a second roscid outside the Smoke setup — used for the auth and
-/// dead-bridge scenarios that need their own flag set. `jar` overrides the
-/// bridge jar (a nonexistent path yields a server that can never get a
-/// bridge); the placeholder intermediary is never contacted by these
-/// scenarios.
+/// dead-intermediary scenarios that need their own flag set. The
+/// placeholder intermediary is never contacted by these scenarios.
 fn spawn_roscid(dir: &std::path::Path, bind: &str, extra: &[&str]) -> Child {
     Command::new(env!("CARGO_BIN_EXE_roscid"))
-        .env(
-            "OSCI_BRIDGE_JAR",
-            repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
-        )
         .env("OSCI_CERT_PIN", DEMO_PIN)
         .arg("--bind")
         .arg(bind)

@@ -1,8 +1,8 @@
 # rosci — build control panel
 #
 # Ground rules enforced here:
-#   * Everything builds INSIDE the pinned builder container. The host stays Java-free.
-#   * Everything caches INSIDE this directory (.cargo-home, .m2-repo) — gitignored.
+#   * Everything builds INSIDE the pinned builder container. The host stays toolchain-free.
+#   * Everything caches INSIDE this directory (.cargo-home) — gitignored.
 #   * `make check` runs every gate; run it before submitting anything.
 #
 # Container runtime: docker or podman, first one found wins. Override with:
@@ -15,7 +15,7 @@ $(error No container runtime found. Install docker or podman — building on the
 endif
 
 WORK           := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-IMAGE          := rosci-builder:1
+IMAGE          := rosci-builder:2
 HOST_UID       := $(shell id -u)
 HOST_GID       := $(shell id -g)
 
@@ -48,7 +48,7 @@ endif
 CONTAINER_USER := $(if $(findstring podman,$(OCI)),,--user $(HOST_UID):$(HOST_GID))
 
 # All the honoring of "keep everything in this directory" happens right here:
-# cargo caches, registry and (below) the maven local repo live under /work.
+# cargo caches and registry live under /work.
 IN_CONTAINER = $(OCI) run --rm \
   $(CONTAINER_USER) \
   -e HOME=/work \
@@ -57,8 +57,6 @@ IN_CONTAINER = $(OCI) run --rm \
   -v $(WORK):/work \
   -w /work \
   $(IMAGE)
-
-MVN = mvn -q -Dmaven.repo.local=/work/.m2-repo
 
 .DEFAULT_GOAL := help
 
@@ -76,17 +74,11 @@ image: ## Build the pinned builder container image
 	$(OCI) build -f container/Dockerfile.builder -t $(IMAGE) container/
 
 .PHONY: build
-build: image ## Build everything (Java bridge + mock jars, Rust workspace)
-	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml package
-	$(IN_CONTAINER) $(MVN) -f java/osci-mock/pom.xml package
+build: image ## Build the Rust workspace
 	$(IN_CONTAINER) cargo build --workspace --all-targets
 
 .PHONY: test
-test: image ## Run all tests (Java unit + Rust unit/integration/e2e)
-	# `package`, not `test`, for both jars: the shaded jars must exist or
-	# the Rust e2e suites skip silently — a green run that tested nothing.
-	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml package
-	$(IN_CONTAINER) $(MVN) -f java/osci-mock/pom.xml package
+test: image ## Run all tests (unit/integration/e2e, in-process intermediary)
 	$(IN_CONTAINER) cargo test --workspace
 
 .PHONY: interop
@@ -94,53 +86,17 @@ interop: build ## Opt-in interop suite — CONTACTS gov.test.osci.de (real inter
 	$(IN_CONTAINER) bash -c 'ROSCI_INTEROP=1 cargo test -p osci-cli --test interop -- --nocapture'
 
 .PHONY: lint
-lint: image ## Rustfmt + clippy -D warnings + maven verify
+lint: image ## Rustfmt + clippy -D warnings
 	$(IN_CONTAINER) cargo fmt --all -- --check
 	$(IN_CONTAINER) cargo clippy --workspace --all-targets -- -D warnings
-	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml verify
-	$(IN_CONTAINER) $(MVN) -f java/osci-mock/pom.xml verify
 
 .PHONY: audit
-audit: image ## cargo-deny (workspace + fuzz tree): licenses, advisories, crate sources — plus OSV scan of the Java tree
+audit: image ## cargo-deny (workspace + fuzz tree): licenses, advisories, crate sources
 	$(IN_CONTAINER) cargo deny --config deny.toml check --hide-inclusion-graph licenses advisories sources
 	$(IN_CONTAINER) bash -c 'cd fuzz && cargo deny --config ../deny.toml check --hide-inclusion-graph advisories sources'
-	$(IN_CONTAINER) bash container/osv-java.sh
-
-JACOCO_VERSION := 0.8.15
-JACOCO_ZIP_SHA256 := 5b3f6ddb724e761d25c937d68b0189a3a23f3e220e3282575ee0b53359e8110e
 
 .PHONY: coverage
-coverage: image ## Measured coverage: cargo-llvm-cov (Rust) + JaCoCo (Java bridge, unit + e2e)
-	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml verify
-	@echo "--- Java bridge, unit tests (JaCoCo) ---"
-	$(IN_CONTAINER) bash container/jacoco-summary.sh java/osci-bridge/target/site/jacoco/jacoco.csv
-	$(IN_CONTAINER) bash -c '\
-	  mkdir -p coverage .deps/jacoco \
-	  && curl -fsSL -o .deps/jacoco/jacoco.zip \
-	       https://github.com/jacoco/jacoco/releases/download/v$(JACOCO_VERSION)/jacoco-$(JACOCO_VERSION).zip \
-	  && sha256sum .deps/jacoco/jacoco.zip | grep -q $(JACOCO_ZIP_SHA256) \
-	     || { echo "jacoco zip checksum mismatch"; exit 1; } \
-	  && unzip -joq .deps/jacoco/jacoco.zip lib/jacocoagent.jar lib/jacococli.jar -d .deps/jacoco'
-	@echo "--- Java bridge, e2e (real jar, JaCoCo agent via OSCI_JAVA_OPTS) ---"
-	$(IN_CONTAINER) bash -c '\
-	  rm -f coverage/bridge-e2e.exec coverage/e2e-test.log coverage/e2e-status \
-	  && OSCI_JAVA_OPTS="-javaagent:/work/.deps/jacoco/jacocoagent.jar=output=file,destfile=/work/coverage/bridge-e2e.exec,append=true" \
-	     cargo test -p osci-cli --test e2e >coverage/e2e-test.log 2>&1; \
-	  echo $$? > coverage/e2e-status; \
-	  test -f coverage/bridge-e2e.exec || { echo "no e2e execution data"; cat coverage/e2e-test.log; exit 1; }'
-	$(IN_CONTAINER) java -jar .deps/jacoco/jacococli.jar merge \
-	  java/osci-bridge/target/jacoco.exec coverage/bridge-e2e.exec \
-	  --destfile coverage/bridge-combined.exec >/dev/null
-	$(IN_CONTAINER) java -jar .deps/jacoco/jacococli.jar report coverage/bridge-combined.exec \
-	  --classfiles java/osci-bridge/target/classes --csv coverage/bridge-combined.csv >/dev/null
-	@echo "--- Java bridge, unit + e2e combined ---"
-	$(IN_CONTAINER) bash container/jacoco-summary.sh coverage/bridge-combined.csv
-	@# Coverage data is still emitted when the suite fails, but the failure
-	@# itself must not drown in `|| true` — a green coverage number from a
-	@# red suite is exactly the kind of lie this project does not tell.
-	$(IN_CONTAINER) bash -c '\
-	  status=$$(cat coverage/e2e-status); rm -f coverage/e2e-status coverage/e2e-test.log; \
-	  if [ "$$status" -ne 0 ]; then echo "e2e suite FAILED during coverage run (exit $$status)"; exit 1; fi'
+coverage: image ## Measured coverage: cargo-llvm-cov, lcov report in coverage/
 	$(IN_CONTAINER) bash -c 'mkdir -p coverage && cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info'
 	@echo "Rust lcov report: coverage/lcov.info"
 
@@ -162,36 +118,20 @@ fuzz: image ## 60s libFuzzer smoke on the bridge-response parser (pinned nightly
 	  env CARGO_HOME=/opt/cargo rustup toolchain install nightly-$(NIGHTLY_DATE) --profile minimal >/dev/null || exit 1; \
 	  export RUSTUP_TOOLCHAIN=nightly-$(NIGHTLY_DATE); \
 	  cargo-fuzz --version 2>/dev/null | grep -q "$(CARGO_FUZZ_VERSION)" || cargo install cargo-fuzz --locked --version $(CARGO_FUZZ_VERSION) >/dev/null || exit 1; \
-	  cd fuzz && set -o pipefail && cargo fuzz run bridge_response_parse -- -max_total_time=60 2>&1 | tail -12'
+	  cd fuzz && set -o pipefail && cargo fuzz run dto_json_parse -- -max_total_time=60 2>&1 | tail -12'
 
 .PHONY: release
-release: image ## Produce dist/: rosci + roscid binaries, osci-bridge.jar, SHA256SUMS
-	$(IN_CONTAINER) $(MVN) -f java/osci-bridge/pom.xml package
+release: image ## Produce dist/: rosci + roscid binaries, SHA256SUMS
 	$(IN_CONTAINER) cargo build --workspace --release
 	$(IN_CONTAINER) bash -c '\
-	  install -d dist/bin dist/lib \
+	  install -d dist/bin \
 	  && install -m 0755 target/release/rosci dist/bin/rosci \
 	  && install -m 0755 target/release/roscid dist/bin/roscid \
-	  && install -m 0644 java/osci-bridge/target/osci-bridge.jar dist/lib/osci-bridge.jar \
 	  && cd dist && find . -type f ! -name SHA256SUMS -exec sha256sum {} \; > SHA256SUMS'
 	@echo "Release artifacts in dist/ — checksums in dist/SHA256SUMS."
 
-.PHONY: manifest
-manifest: image ## (Re)generate the Java dependency checksum manifest (commit the result)
-	$(IN_CONTAINER) bash -c '\
-	  test -d .m2-repo || { echo "Run make build first."; exit 2; }; \
-	  find .m2-repo -type f \( -name "*.jar" -o -name "*.pom" \) -printf "%P\n" | sort \
-	  | (cd .m2-repo && xargs -d "\n" sha256sum) \
-	  > java/osci-bridge/DEPENDENCY_MANIFEST.sha256'
-	@echo "Wrote java/osci-bridge/DEPENDENCY_MANIFEST.sha256 — commit it."
-
-.PHONY: verify-deps
-verify-deps: image ## Verify the maven cache against DEPENDENCY_MANIFEST.sha256
-	$(IN_CONTAINER) bash -c '\
-	  (cd .m2-repo && sha256sum -c ../java/osci-bridge/DEPENDENCY_MANIFEST.sha256)'
-
 .PHONY: check
-check: lint test audit verify-deps ## Everything a good day needs: all gates in one command (CI runs this too)
+check: lint test audit ## Everything a good day needs: all gates in one command (CI runs this too)
 	@echo "check: all gates green. Das Amt hätte nichts zu bemängeln."
 
 .PHONY: lock-info
@@ -205,10 +145,7 @@ shell: image ## Drop into an interactive shell in the builder container
 .PHONY: clean
 clean: ## Remove all build outputs, caches and tool downloads (keeps the builder image; nothing tracked is touched)
 	rm -rf target dist coverage \
-	       java/osci-bridge/target java/osci-mock/target \
-	       java/osci-bridge/dependency-reduced-pom.xml \
-	       java/osci-mock/dependency-reduced-pom.xml \
-	       .deps .m2-repo .cargo-home .rustup \
+	       .deps .cargo-home .rustup \
 	       fuzz/target fuzz/corpus fuzz/coverage fuzz/artifacts \
 	       './$$TMPDIR'
 	@# .cache can hold root-owned podman-root-trash from --remote runs

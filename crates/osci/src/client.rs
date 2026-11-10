@@ -232,22 +232,14 @@ impl OsciClientBuilder {
         let mut tls_client_chain = Vec::new();
         let mut tls_client_key_pem = String::new();
         if let Some(p12_b64) = &self.tls.client_p12_b64 {
-            let pin = self
-                .tls
-                .client_pin
-                .as_ref()
-                .ok_or_else(|| Error::Config("tls.client_pin is required with client_p12_b64".into()))?;
-            let der = base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD,
-                p12_b64.trim(),
-            )
-            .map_err(|e| Error::Config(format!("tls.client_p12_b64 is not base64: {e}")))?;
+            let pin = self.tls.client_pin.as_ref().ok_or_else(|| {
+                Error::Config("tls.client_pin is required with client_p12_b64".into())
+            })?;
+            let der =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, p12_b64.trim())
+                    .map_err(|e| Error::Config(format!("tls.client_p12_b64 is not base64: {e}")))?;
             let keypair = crate::p12::P12Keypair::parse(&der, pin.as_str())?;
-            tls_client_chain = keypair
-                .chain()
-                .iter()
-                .map(|c| c.der().to_vec())
-                .collect();
+            tls_client_chain = keypair.chain().iter().map(|c| c.der().to_vec()).collect();
             use rsa::pkcs8::EncodePrivateKey;
             let key_der = keypair
                 .key()
@@ -465,7 +457,6 @@ pub fn url_host_is_loopback(url: &str) -> bool {
             .all(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_digit()))
 }
 
-
 /// DER bytes as a single-line-label PEM document (the wire format the
 /// TLS stack expects for client keys and anchors).
 fn pem_wrap(label: &str, der: &[u8]) -> String {
@@ -480,6 +471,11 @@ fn pem_wrap(label: &str, der: &[u8]) -> String {
     out
 }
 
+/// The oscirs stack version this build embeds (crate version + git rev),
+/// for `rosci version` and diagnostics.
+pub fn library_version() -> String {
+    format!("oscirs {} (native)", osci_rs::VERSION)
+}
 
 #[cfg(test)]
 mod loopback_tests {

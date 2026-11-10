@@ -22,14 +22,14 @@ use std::sync::Arc;
 
 use osci_core::helper::base64;
 use osci_core::message::compose::{
-    compose_message, signature_header_name, OutAttachment, OutContent,
-    OutContentContainer, OutFeedback, OutMessage, OutProcessCard, OutProcessCardBundle,
+    compose_message, signature_header_name, OutAttachment, OutContent, OutContentContainer,
+    OutFeedback, OutMessage, OutProcessCard, OutProcessCardBundle,
 };
+use osci_core::message::stored::StoredMessage;
 use osci_core::message::MessageType;
 use osci_core::soap::{find_header, ControlBlock};
-use osci_core::message::stored::StoredMessage;
 use osci_rs::security::{
-    decrypt_transport_message, encrypt_container, EncryptConfig, StoredMessageLike, EncRecipient,
+    decrypt_transport_message, encrypt_container, EncRecipient, EncryptConfig, StoredMessageLike,
 };
 use osci_rs::{Certificate, RsaSigner, Signer};
 
@@ -124,26 +124,29 @@ impl MockIntermediary {
                     .ok()
                     .and_then(|c| c.into_iter().next())
             });
-        let client_cert = Certificate::from_pem_bundle(
-            &std::fs::read_to_string(client_cipher_pem).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
-            })?,
-        )
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?
-        .into_iter()
-        .next()
-        .ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "no cert in client pem")
-        })?;
+        let client_cert =
+            Certificate::from_pem_bundle(&std::fs::read_to_string(client_cipher_pem).map_err(
+                |e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()),
+            )?)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "no cert in client pem")
+            })?;
         // the intermediary's own cipher identity: decrypts transport
         // envelopes on requests that ran with full crypto
-        let intermed_decrypter = osci::p12::P12Decrypter::new(osci::p12::P12Keypair::parse(
-            std::fs::read(intermed_cipher_p12).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
-            })?.as_slice(),
-            p12_pin,
-        )
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?);
+        let intermed_decrypter = osci::p12::P12Decrypter::new(
+            osci::p12::P12Keypair::parse(
+                std::fs::read(intermed_cipher_p12)
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+                    })?
+                    .as_slice(),
+                p12_pin,
+            )
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?,
+        );
 
         let dump_dir: Option<PathBuf> = dump_dir.map(|p| p.to_path_buf());
         let keepalive = Arc::new(AtomicBool::new(true));
@@ -340,9 +343,9 @@ fn handle(
     match kind {
         MessageType::GetMessageId => {
             // the reservation: a stable canned id in wire form
-            out.entry_inner = Some(format!(
-                r#"<osci:getMessageId xmlns:osci="http://www.osci.de/2002/04/osci"><osci:MessageId>bW9jay1yZXNlcnZhdGlvbi0x</osci:MessageId></osci:getMessageId>"#
-            ));
+            out.entry_inner = Some(
+                r#"<osci:getMessageId xmlns:osci="http://www.osci.de/2002/04/osci"><osci:MessageId>bW9jay1yZXNlcnZhdGlvbi0x</osci:MessageId></osci:getMessageId>"#.to_string(),
+            );
         }
         MessageType::FetchDelivery => {
             // one response, two canned messages: the plain container with
@@ -376,7 +379,9 @@ fn handle(
             let enc = encrypt_container(
                 &container,
                 &[EncRecipient {
-                    cert: client_cert.expect("client cipher cert for canned fetch").clone(),
+                    cert: client_cert
+                        .expect("client cipher cert for canned fetch")
+                        .clone(),
                     cert_element_id: "originator_cipher".into(),
                 }],
                 &EncryptConfig::default(),
@@ -456,10 +461,15 @@ fn handle(
             .map(|d| {
                 let mut uri = String::new();
                 if let Some(h) = osci_core::soap::find_header(&d) {
-                    if let Some(sig) = h.elements().find(|e| e.local == "SupplierSignature" || e.local == "ClientSignature") {
+                    if let Some(sig) = h
+                        .elements()
+                        .find(|e| e.local == "SupplierSignature" || e.local == "ClientSignature")
+                    {
                         if let Some(s) = sig.elements().find(|e| e.local == "Signature") {
                             if let Some(ki) = s.elements().find(|e| e.local == "KeyInfo") {
-                                if let Some(rm) = ki.elements().find(|e| e.local == "RetrievalMethod") {
+                                if let Some(rm) =
+                                    ki.elements().find(|e| e.local == "RetrievalMethod")
+                                {
                                     uri = rm.attr("URI").unwrap_or_default().to_string();
                                 }
                             }
@@ -477,7 +487,10 @@ fn handle(
     if let Some(dump) = dump {
         let _ = std::fs::write(dump.dir.join(format!("request-{}.xml", dump.n)), body);
         let inner = inner_xml.unwrap_or_else(|| body.to_vec());
-        let _ = std::fs::write(dump.dir.join(format!("request-{}.inner.xml", dump.n)), &inner);
+        let _ = std::fs::write(
+            dump.dir.join(format!("request-{}.inner.xml", dump.n)),
+            &inner,
+        );
         let _ = std::fs::write(
             dump.dir.join(format!("request-{}.meta", dump.n)),
             format!("transport_encrypted: {transport_encrypted}\n"),
@@ -504,7 +517,10 @@ fn handle(
         }
     }
     if let Some(dump) = dump {
-        let _ = std::fs::write(dump.dir.join(format!("response-{}.xml", dump.n)), &plain_response);
+        let _ = std::fs::write(
+            dump.dir.join(format!("response-{}.xml", dump.n)),
+            &plain_response,
+        );
     }
     plain_response
 }

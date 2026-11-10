@@ -26,13 +26,11 @@ jobs:
         uses: actions/cache@v6
         with:
           path: |
-            .m2-repo
             .cargo-home
             .cache
-            .deps
           key: >-
             ${{ runner.os }}-osci-${{ hashFiles('container/Dockerfile.builder',
-            'Cargo.lock', 'java/osci-bridge/pom.xml', 'java/osci-mock/pom.xml') }}
+            'Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-osci-
 
@@ -46,7 +44,7 @@ jobs:
       - name: Test
         run: make OCI=docker test
 
-      - name: Audit (cargo-deny + OSV scan of the Maven tree)
+      - name: Audit (cargo-deny)
         run: make OCI=docker audit
 
       - name: Verify dependency manifest

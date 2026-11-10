@@ -1,4 +1,4 @@
-//! Interop: the real `rosci` binary + real bridge jar against the one
+//! Interop: the real `rosci` binary against the one
 //! sanctioned remote endpoint — Governikus' public OSCI-Manager test
 //! intermediary (gov.test.osci.de), the software many production Verbünde
 //! run. Evidence base and ground rules: docs/TEST-INFRASTRUCTURE.md.
@@ -20,7 +20,6 @@
 use std::fs;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use assert_cmd::Command as AssertCommand;
@@ -37,13 +36,6 @@ fn repo_root() -> PathBuf {
 
 fn fixture(name: &str) -> PathBuf {
     repo_root().join(FIXTURE_DIR).join(name)
-}
-
-fn which_java() -> Option<String> {
-    ["java", "/usr/bin/java"]
-        .iter()
-        .find(|c| Command::new(c).arg("-version").output().is_ok())
-        .map(|c| c.to_string())
 }
 
 fn interop_enabled() -> bool {
@@ -94,26 +86,13 @@ fn gate() -> Option<()> {
         eprintln!("interop: skipping (gov.test.osci.de unreachable — no availability guarantee)");
         return None;
     }
-    if which_java().is_none() {
-        eprintln!("interop: skipping (no java on PATH)");
-        return None;
-    }
-    let jar = repo_root().join("java/osci-bridge/target/osci-bridge.jar");
-    if !jar.is_file() {
-        eprintln!("interop: skipping (bridge jar missing — run make build)");
-        return None;
-    }
     verify_fixtures();
     Some(())
 }
 
 fn rosci() -> AssertCommand {
     let mut cmd = AssertCommand::cargo_bin("rosci").unwrap();
-    cmd.env(
-        "OSCI_BRIDGE_JAR",
-        repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
-    )
-    .timeout(Duration::from_secs(120));
+    cmd.timeout(Duration::from_secs(120));
     cmd
 }
 

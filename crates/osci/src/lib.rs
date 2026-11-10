@@ -51,7 +51,8 @@ pub mod protocol;
 mod xta;
 
 pub use client::{
-    resolve_dvdv, url_host_is_loopback, FetchQuery, OsciClient, Recipient, SendBuilder,
+    library_version, resolve_dvdv, url_host_is_loopback, FetchQuery, OsciClient, Recipient,
+    SendBuilder,
 };
 pub use config::{read_certificate_file, Identity, Intermediary, Tls};
 pub use dvdv::{DvdvDirectory, DvdvEntry, FileDvdv};
