@@ -1,7 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/osci", "crates/osci-cli", "crates/roscid"]
-exclude = ["fuzz"]
+members = ["crates/osci", "crates/osci-cli", "crates/roscid", "crates/testsupport"]
+# `.oscirs-work` hosts a nested cargo workspace (the oscirs iteration
+# worktree); without excluding it, cargo resolves the patched crates'
+# workspace inheritance (edition, version) against THIS root instead of
+# theirs.
+exclude = ["fuzz", ".oscirs-work"]
 
 [workspace.package]
 # Matches CHANGELOG.md's released line and docs/openapi.yaml — the
@@ -24,4 +28,14 @@ zeroize = "1.9"
 [profile.release]
 strip = true
 lto = "thin"
+
+# LOCAL ITERATION ONLY — never commit this block. It redirects the pinned
+# oscirs git dependencies to the fix/live-dialect worktree in .oscirs-work/
+# (git-excluded), which both the host and the /work container mount can see.
+# Final cutover: delete this section and bump the `rev =` pins instead.
+[patch."https://github.com/hauksch/oscirs"]
+osci = { path = ".oscirs-work/crates/osci" }
+"osci-core" = { path = ".oscirs-work/crates/osci-core" }
+"osci-crypto" = { path = ".oscirs-work/crates/osci-crypto" }
+"osci-transport" = { path = ".oscirs-work/crates/osci-transport" }
 

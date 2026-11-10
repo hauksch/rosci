@@ -19,6 +19,7 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
+testsupport = { path = "../testsupport" }
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"

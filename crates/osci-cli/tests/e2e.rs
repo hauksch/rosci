@@ -1,14 +1,10 @@
-//! End-to-end: the real `osci` binary + the real Java bridge jar + the
-//! mock intermediary on localhost. No internet, no traces, no mercy.
-//!
-//! Skips gracefully when java/openssl or the jars are unavailable (host
-//! development); inside the builder container `make test` provides all of
-//! them. Network endpoints touched: 127.0.0.1 only.
+//! End-to-end: the real `rosci` binary against the in-process mock
+//! intermediary (crates/testsupport). No internet, no jars, no mercy.
+//! Network endpoints touched: 127.0.0.1 only.
 
-use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
 use assert_cmd::Command as AssertCommand;
@@ -18,96 +14,36 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-struct MockIntermediary {
-    child: Child,
-    port: u16,
-}
+/// The in-process mock intermediary (crates/testsupport) — same role the
+/// Java osci-mock jar used to play, without the JVM.
+struct MockIntermediary(testsupport::MockIntermediary);
 
 impl MockIntermediary {
     fn start(dump_dir: &Path) -> Option<Self> {
-        Self::start_with(dump_dir, &[])
+        Some(Self(
+            testsupport::MockIntermediary::start_with_pki(
+                dump_dir.parent().expect("dump dir has a pki parent"),
+                dump_dir,
+            )
+            .expect("mock intermediary starts"),
+        ))
     }
 
     fn start_with(dump_dir: &Path, extra_args: &[&str]) -> Option<Self> {
-        let jar = repo_root().join("java/osci-mock/target/osci-mock.jar");
-        if !jar.is_file() || which_java().is_none() {
-            eprintln!("e2e: skipping (mock jar or java missing)");
-            return None;
-        }
-        let port = free_port();
-        let mut cmd = Command::new(which_java().unwrap());
-        cmd.arg("-jar")
-            .arg(&jar)
-            .arg(port.to_string())
-            .arg(dump_dir.to_str().unwrap());
-        // With the intermediary keys on board, the mock decrypts
-        // transport-encrypted requests, encrypts responses back, and signs
-        // every response like a proper intermediary.
-        let pki = dump_dir.parent().map(|p| p.to_path_buf());
-        let key = pki.as_ref().map(|p| p.join("intermed-cipher.key"));
-        if let Some(key) = key.filter(|k| k.is_file()) {
-            cmd.arg("--key").arg(key);
-        }
-        let sign_key = pki.as_ref().map(|p| p.join("intermed-sign.key"));
-        let sign_cert = pki.as_ref().map(|p| p.join("intermed-sign.pem"));
-        if let Some(k) = sign_key.filter(|k| k.is_file()) {
-            cmd.arg("--sign-key").arg(k).arg("--sign-cert").arg(
-                sign_cert
-                    .filter(|c| c.is_file())
-                    .expect("sign cert next to sign key"),
-            );
-        }
-        cmd.args(extra_args);
-        let mut child = cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .expect("spawn mock intermediary");
-
-        // Wait for READY with a deadline — a JVM that never wakes up is a
-        // test failure, not a coffee break.
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        let mut ready = String::new();
-        {
-            let stdout = child.stdout.take().expect("piped stdout");
-            let mut reader = BufReader::new(stdout);
-            loop {
-                if std::time::Instant::now() > deadline {
-                    panic!("mock intermediary did not report READY in time");
-                }
-                ready.clear();
-                if reader.read_line(&mut ready).unwrap_or(0) == 0 {
-                    panic!("mock intermediary exited before READY");
-                }
-                if ready.starts_with("READY") {
-                    break;
-                }
-            }
-        }
-        Some(Self { child, port })
+        let pki = dump_dir.parent().expect("dump dir has a pki parent");
+        let inner = if extra_args.contains(&"--tamper-signature") {
+            testsupport::MockIntermediary::start_tampering(pki, dump_dir)
+        } else {
+            testsupport::MockIntermediary::start_with_pki(pki, dump_dir)
+        };
+        Some(Self(inner.expect("mock intermediary starts")))
     }
 
-    pub(crate) fn url(&self) -> String {
-        format!(
-            "http://127.0.0.1:{}/osci-manager-entry/externalentry",
-            self.port
-        )
+    fn url(&self) -> String {
+        self.0.url()
     }
 }
 
-impl Drop for MockIntermediary {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn which_java() -> Option<String> {
-    ["java", "/usr/bin/java"]
-        .iter()
-        .find(|c| Command::new(c).arg("-version").output().is_ok())
-        .map(|c| c.to_string())
-}
 
 fn free_port() -> u16 {
     // Bind-then-drop races by nature; three attempts make the race
@@ -129,11 +65,6 @@ struct E2e {
 
 impl E2e {
     fn setup() -> Option<(Self, MockIntermediary)> {
-        let bridge_jar = repo_root().join("java/osci-bridge/target/osci-bridge.jar");
-        if !bridge_jar.is_file() || which_java().is_none() {
-            eprintln!("e2e: skipping (bridge jar or java missing)");
-            return None;
-        }
         if Command::new("openssl").arg("version").output().is_err() {
             eprintln!("e2e: skipping (openssl missing)");
             return None;
@@ -184,10 +115,7 @@ impl E2e {
 
     fn rosci(&self) -> AssertCommand {
         let mut cmd = AssertCommand::cargo_bin("rosci").unwrap();
-        cmd.env(
-            "OSCI_BRIDGE_JAR",
-            repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
-        )
+        cmd
         .env("OSCI_CERT_PIN", "testpin")
         .env("ROSCI_DEBUG", "1")
         // The bridge renders OSCI timestamps in local time (the library's
@@ -342,7 +270,7 @@ fn send_fetch_status_against_mock_intermediary() {
         .stdout
         .clone();
     let messages: serde_json::Value = serde_json::from_slice(&json_out).expect("fetch json");
-    let contents = messages[0]["contents"].as_array().expect("contents");
+    let contents = messages[0]["contents"].as_array().unwrap_or_else(|| panic!("messages[0] has no contents: {messages}"));
     assert!(
         !contents.is_empty(),
         "fetch json must carry content entries"
@@ -448,6 +376,14 @@ fn send_with_transport_encryption_against_mock_intermediary() {
         }
     }
     assert!(metas >= 2, "expected at least 2 exchanges, saw {metas}");
+
+    // TEMP debug: keep the exchange dumps for offline analysis
+    let keep = std::path::Path::new("../../probe/e2e-dumps");
+    let _ = std::fs::remove_dir_all(keep);
+    let _ = std::fs::create_dir_all(keep);
+    for e in dump_dir.read_dir().expect("dump dir").filter_map(|e| e.ok()) {
+        let _ = std::fs::copy(e.path(), keep.join(e.file_name()));
+    }
 
     // --- the raw packets are ciphertext, not costume jewelry --------------
     // Find the storeDelivery exchange (getMessageId is N=1, storeDelivery N=2,
@@ -717,10 +653,7 @@ fn tampered_response_signature_is_rejected_loudly() {
     };
 
     let mut cmd = AssertCommand::cargo_bin("rosci").unwrap();
-    cmd.env(
-        "OSCI_BRIDGE_JAR",
-        repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
-    )
+    cmd
     .env("OSCI_CERT_PIN", "testpin")
     .env("TZ", "UTC")
     .current_dir(pki_dir.path())

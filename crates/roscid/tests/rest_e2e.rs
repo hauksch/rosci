@@ -1,4 +1,4 @@
-//! REST e2e: the real `roscid` binary + real bridge jar + real mock
+//! REST e2e: the real `roscid` binary against the in-process mock
 //! intermediary — the full server surface driven over HTTP. Ground rules:
 //! 127.0.0.1 only, no interop contact (that is the gated interop suite's
 //! job).
@@ -15,22 +15,8 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn which_java() -> Option<String> {
-    ["java", "/usr/bin/java"]
-        .iter()
-        .find(|c| Command::new(c).arg("-version").output().is_ok())
-        .map(|c| c.to_string())
-}
-
 struct Mock {
-    child: Child,
-}
-
-impl Drop for Mock {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
+    inner: testsupport::MockIntermediary,
 }
 
 struct Roscid {
@@ -78,13 +64,6 @@ struct Smoke {
 /// TempDir guard especially must not be dropped inside setup, or the
 /// certs vanish before the tests read them.
 fn setup() -> Option<Smoke> {
-    let bridge_jar = repo_root().join("java/osci-bridge/target/osci-bridge.jar");
-    let mock_jar = repo_root().join("java/osci-mock/target/osci-mock.jar");
-    if !bridge_jar.is_file() || !mock_jar.is_file() || which_java().is_none() {
-        eprintln!("rest-e2e: skipping (jars or java missing — make build first)");
-        return None;
-    }
-
     let pki_guard = tempfile::tempdir().expect("pki tempdir");
     let pki = pki_guard.path().to_path_buf();
     let status = Command::new(repo_root().join("tests/gen-pki.sh"))
@@ -95,33 +74,15 @@ fn setup() -> Option<Smoke> {
 
     let dump_dir = pki.join("dump");
     std::fs::create_dir_all(&dump_dir).unwrap();
-    let mock_port = free_port();
-    let mock_log = std::fs::File::create(pki.join("mock.log")).unwrap();
-    #[allow(clippy::zombie_processes)] // Mock::drop kills + reaps
     let mock = Mock {
-        child: Command::new(which_java().unwrap())
-            .arg("-jar")
-            .arg(&mock_jar)
-            .arg(mock_port.to_string())
-            .arg(&dump_dir)
-            .arg("--key")
-            .arg(pki.join("intermed-cipher.key"))
-            .arg("--sign-key")
-            .arg(pki.join("intermed-sign.key"))
-            .arg("--sign-cert")
-            .arg(pki.join("intermed-sign.pem"))
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(mock_log))
-            .spawn()
-            .expect("spawn mock intermediary"),
+        inner: testsupport::MockIntermediary::start_simple(&pki, &dump_dir)
+            .expect("mock intermediary starts"),
     };
-
-    wait_for_port(&format!("127.0.0.1:{mock_port}"), "mock intermediary");
+    let mock_port = mock.inner.port;
 
     // roscid submits through the mock; recipient addressed by inline cert.
     let rosci_port = free_port();
     let roscid_child = Command::new(env!("CARGO_BIN_EXE_roscid"))
-        .env("OSCI_BRIDGE_JAR", &bridge_jar)
         .env("OSCI_CERT_PIN", DEMO_PIN)
         .arg("--bind")
         .arg(format!("127.0.0.1:{rosci_port}"))

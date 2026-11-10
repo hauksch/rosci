@@ -1,0 +1,18 @@
+[package]
+# Test-only: the in-process mock OSCI intermediary that replaces the
+# retired Java osci-mock jar for the e2e suites. Dev-dependency of
+# osci-cli and roscid; never published.
+name = "testsupport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The library under test (its p12 helpers for the intermediary identity).
+rosci = { path = "../osci" }
+# The oscirs stack for composing mock responses.
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "3b375d675e2cecc4b6910566a933733796ff1764" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "3b375d675e2cecc4b6910566a933733796ff1764" }
+base64 = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

@@ -1239,7 +1239,6 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 [[package]]
 name = "osci"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=3b375d675e2cecc4b6910566a933733796ff1764#3b375d675e2cecc4b6910566a933733796ff1764"
 dependencies = [
  "base64",
  "osci-core",
@@ -1247,27 +1246,6 @@ dependencies = [
  "osci-transport",
  "rand 0.8.8",
  "thiserror",
-]
-
-[[package]]
-name = "osci"
-version = "0.4.0"
-dependencies = [
- "base64",
- "osci 0.1.0",
- "osci-core",
- "osci-crypto",
- "osci-transport",
- "p12-keystore",
- "proptest",
- "rand 0.8.8",
- "rsa",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tracing",
- "zeroize",
 ]
 
 [[package]]
@@ -1278,14 +1256,15 @@ dependencies = [
  "base64",
  "chrono",
  "clap",
- "osci 0.1.0",
- "osci 0.4.0",
+ "osci",
  "osci-core",
  "predicates",
  "proptest",
+ "rosci",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
+ "testsupport",
  "tracing",
  "tracing-subscriber",
  "zeroize",
@@ -1294,7 +1273,6 @@ dependencies = [
 [[package]]
 name = "osci-core"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=3b375d675e2cecc4b6910566a933733796ff1764#3b375d675e2cecc4b6910566a933733796ff1764"
 dependencies = [
  "chrono",
  "osci-crypto",
@@ -1306,7 +1284,6 @@ dependencies = [
 [[package]]
 name = "osci-crypto"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=3b375d675e2cecc4b6910566a933733796ff1764#3b375d675e2cecc4b6910566a933733796ff1764"
 dependencies = [
  "aes 0.8.4",
  "base64",
@@ -1329,7 +1306,6 @@ dependencies = [
 [[package]]
 name = "osci-transport"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=3b375d675e2cecc4b6910566a933733796ff1764#3b375d675e2cecc4b6910566a933733796ff1764"
 dependencies = [
  "thiserror",
  "ureq",
@@ -1757,16 +1733,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "rosci"
+version = "0.4.0"
+dependencies = [
+ "base64",
+ "osci",
+ "osci-core",
+ "osci-crypto",
+ "osci-transport",
+ "p12-keystore",
+ "proptest",
+ "rand 0.8.8",
+ "rsa",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "zeroize",
+]
+
+[[package]]
 name = "roscid"
 version = "0.4.0"
 dependencies = [
  "base64",
  "clap",
- "osci 0.4.0",
+ "rosci",
  "serde",
  "serde_json",
  "signal-hook",
  "tempfile",
+ "testsupport",
  "tiny_http",
  "tracing",
  "tracing-subscriber",
@@ -2154,6 +2152,17 @@ name = "termtree"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
+
+[[package]]
+name = "testsupport"
+version = "0.4.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "osci",
+ "osci-core",
+ "rosci",
+]
 
 [[package]]
 name = "thiserror"
