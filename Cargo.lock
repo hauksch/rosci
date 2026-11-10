@@ -2166,6 +2166,7 @@ dependencies = [
  "osci",
  "osci-core",
  "rosci",
+ "rustls",
 ]
 
 [[package]]

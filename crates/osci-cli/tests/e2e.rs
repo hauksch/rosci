@@ -19,6 +19,13 @@ fn repo_root() -> PathBuf {
 struct MockIntermediary(testsupport::MockIntermediary);
 
 impl MockIntermediary {
+    fn start_tampering(pki_dir: &Path, dump_dir: &Path) -> Option<Self> {
+        Some(Self(
+            testsupport::MockIntermediary::start_tampering(pki_dir, dump_dir)
+                .expect("tampering mock intermediary starts"),
+        ))
+    }
+
     fn start(dump_dir: &Path) -> Option<Self> {
         Some(Self(
             testsupport::MockIntermediary::start_with_pki(
@@ -29,21 +36,10 @@ impl MockIntermediary {
         ))
     }
 
-    fn start_with(dump_dir: &Path, extra_args: &[&str]) -> Option<Self> {
-        let pki = dump_dir.parent().expect("dump dir has a pki parent");
-        let inner = if extra_args.contains(&"--tamper-signature") {
-            testsupport::MockIntermediary::start_tampering(pki, dump_dir)
-        } else {
-            testsupport::MockIntermediary::start_with_pki(pki, dump_dir)
-        };
-        Some(Self(inner.expect("mock intermediary starts")))
-    }
-
     fn url(&self) -> String {
         self.0.url()
     }
 }
-
 
 fn free_port() -> u16 {
     // Bind-then-drop races by nature; three attempts make the race
@@ -60,6 +56,8 @@ fn free_port() -> u16 {
 
 struct E2e {
     workdir: PathBuf,
+    /// https endpoint when the mock runs behind rustls (empty otherwise)
+    tls_url: String,
     _pki_cleanup: tempfile::TempDir,
 }
 
@@ -85,6 +83,7 @@ impl E2e {
         let workdir = pki_dir.path().to_path_buf();
         let e2e = Self {
             workdir: workdir.clone(),
+            tls_url: String::new(),
             _pki_cleanup: pki_dir,
         };
 
@@ -113,15 +112,42 @@ impl E2e {
         Some((e2e, mock))
     }
 
+    /// TLS variant: the mock behind rustls with the generated
+    /// intermed-cipher certificate; `tls_url` is the https endpoint.
+    fn tls_setup() -> Option<Self> {
+        if Command::new("openssl").arg("version").output().is_err() {
+            eprintln!("e2e: skipping (openssl missing)");
+            return None;
+        }
+
+        let pki_dir = tempfile::tempdir().expect("pki tempdir");
+        let status = Command::new(repo_root().join("tests/gen-pki.sh"))
+            .arg(pki_dir.path())
+            .status()
+            .expect("run gen-pki.sh");
+        assert!(status.success(), "PKI generation failed");
+
+        let dump_dir = pki_dir.path().join("dump");
+        std::fs::create_dir_all(&dump_dir).unwrap();
+        let mock = testsupport::MockIntermediary::start_tls(pki_dir.path(), &dump_dir)
+            .expect("tls mock intermediary starts");
+
+        let workdir = pki_dir.path().to_path_buf();
+        Some(Self {
+            workdir: workdir.clone(),
+            tls_url: mock.url().replace("http://", "https://"),
+            _pki_cleanup: pki_dir,
+        })
+    }
+
     fn rosci(&self) -> AssertCommand {
         let mut cmd = AssertCommand::cargo_bin("rosci").unwrap();
-        cmd
-        .env("OSCI_CERT_PIN", "testpin")
-        .env("ROSCI_DEBUG", "1")
-        // The canned assertions read UTC; inherit TZ so a CEST laptop
-        // and the UTC container assert the same thing.
-        .env("TZ", "UTC")
-        .current_dir(&self.workdir);
+        cmd.env("OSCI_CERT_PIN", "testpin")
+            .env("ROSCI_DEBUG", "1")
+            // The canned assertions read UTC; inherit TZ so a CEST laptop
+            // and the UTC container assert the same thing.
+            .env("TZ", "UTC")
+            .current_dir(&self.workdir);
         cmd
     }
 }
@@ -269,7 +295,9 @@ fn send_fetch_status_against_mock_intermediary() {
         .stdout
         .clone();
     let messages: serde_json::Value = serde_json::from_slice(&json_out).expect("fetch json");
-    let contents = messages[0]["contents"].as_array().unwrap_or_else(|| panic!("messages[0] has no contents: {messages}"));
+    let contents = messages[0]["contents"]
+        .as_array()
+        .unwrap_or_else(|| panic!("messages[0] has no contents: {messages}"));
     assert!(
         !contents.is_empty(),
         "fetch json must carry content entries"
@@ -375,14 +403,6 @@ fn send_with_transport_encryption_against_mock_intermediary() {
         }
     }
     assert!(metas >= 2, "expected at least 2 exchanges, saw {metas}");
-
-    // TEMP debug: keep the exchange dumps for offline analysis
-    let keep = std::path::Path::new("../../probe/e2e-dumps");
-    let _ = std::fs::remove_dir_all(keep);
-    let _ = std::fs::create_dir_all(keep);
-    for e in dump_dir.read_dir().expect("dump dir").filter_map(|e| e.ok()) {
-        let _ = std::fs::copy(e.path(), keep.join(e.file_name()));
-    }
 
     // --- the raw packets are ciphertext, not costume jewelry --------------
     // Find the storeDelivery exchange (getMessageId is N=1, storeDelivery N=2,
@@ -627,6 +647,80 @@ fn send_with_attachments() {
     );
 }
 
+/// HTTPS: the mock behind rustls with the generated (self-signed)
+/// intermediary certificate; rosci must present `--tls-ca` and the full
+/// crypto send must succeed over TLS — trust anchors from the native
+/// transport's `HttpTransportTls`, proven on the wire.
+#[test]
+fn send_over_tls_with_trust_anchor() {
+    let Some(e2e) = E2e::tls_setup() else {
+        return;
+    };
+    std::fs::write(
+        e2e.workdir.join("meldung.xta"),
+        "<?xml version=\"1.0\"?><XTA><meldung>tls verbindung</meldung></XTA>",
+    )
+    .unwrap();
+
+    e2e.rosci()
+        .arg("send")
+        .arg("meldung.xta")
+        .args(["--to", "cert:recipient-cipher.pem"])
+        .args(["--intermediary", &e2e.tls_url])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--tls-ca", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--subject")
+        .arg("tls sendung")
+        .arg("--json")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .success();
+}
+
+/// Negative: the same TLS endpoint WITHOUT `--tls-ca` — ureq's default
+/// roots cannot validate the self-signed intermediary certificate, and
+/// the failure must be loud, not a silent plaintext fallback.
+#[test]
+fn send_over_tls_without_trust_anchor_fails() {
+    let Some(e2e) = E2e::tls_setup() else {
+        return;
+    };
+    std::fs::write(
+        e2e.workdir.join("meldung.xta"),
+        "<?xml version=\"1.0\"?><XTA><meldung>keine ca</meldung></XTA>",
+    )
+    .unwrap();
+
+    let output = e2e
+        .rosci()
+        .arg("send")
+        .arg("meldung.xta")
+        .args(["--to", "cert:recipient-cipher.pem"])
+        .args(["--intermediary", &e2e.tls_url])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--subject")
+        .arg("keine ca sendung")
+        .arg("--json")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("certificate") || stderr.contains("tls") || stderr.contains("TLS"),
+        "TLS failure must name the certificate problem: {stderr}"
+    );
+}
+
+/// A dedicated mock that signs correctly and then flips one byte of the
+/// SignatureValue. The client library verifies automatically; the CLI
+/// must fail with a transport/OSCI exit code and a message naming the
+/// problem — anything else would mean verification is decorative.
 #[test]
 fn tampered_response_signature_is_rejected_loudly() {
     // A dedicated mock that signs correctly and then flips one byte of the
@@ -647,31 +741,29 @@ fn tampered_response_signature_is_rejected_loudly() {
         "<?xml version=\"1.0\"?><XTA>signatur-pruefung</XTA>",
     )
     .unwrap();
-    let Some(mock) = MockIntermediary::start_with(&dump_dir, &["--tamper-signature"]) else {
-        return;
-    };
+    let mock = MockIntermediary::start_tampering(pki_dir.path(), &dump_dir)
+        .expect("tampering mock starts");
 
     let mut cmd = AssertCommand::cargo_bin("rosci").unwrap();
-    cmd
-    .env("OSCI_CERT_PIN", "testpin")
-    .env("TZ", "UTC")
-    .current_dir(pki_dir.path())
-    .arg("send")
-    .arg("meldung.xta")
-    .args(["--to", "cert:recipient-cipher.pem"])
-    .args(["--intermediary", &mock.url()])
-    .args(["--intermediary-cert", "intermed-cipher.pem"])
-    .args(["--cert", "client-sign.p12"])
-    .arg("--insecure-transport")
-    .timeout(Duration::from_secs(180))
-    .assert()
-    .failure()
-    .code(4)
-    .stderr(
-        predicates::str::contains("Signature")
-            .or(predicate::str::contains("signatur"))
-            .or(predicate::str::contains("Signatur")),
-    );
+    cmd.env("OSCI_CERT_PIN", "testpin")
+        .env("TZ", "UTC")
+        .current_dir(pki_dir.path())
+        .arg("send")
+        .arg("meldung.xta")
+        .args(["--to", "cert:recipient-cipher.pem"])
+        .args(["--intermediary", &mock.url()])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .arg("--insecure-transport")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .failure()
+        .code(4)
+        .stderr(
+            predicates::str::contains("Signature")
+                .or(predicate::str::contains("signatur"))
+                .or(predicate::str::contains("Signatur")),
+        );
 }
 
 /// Spec §7 obligation (2): rosci's wire traffic must be schema-conform.

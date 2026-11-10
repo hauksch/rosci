@@ -97,6 +97,32 @@ impl MockIntermediary {
         p12_pin: &str,
         tamper: bool,
     ) -> std::io::Result<Self> {
+        Self::start_inner(
+            dump_dir,
+            sign_key_pem,
+            sign_cert_pem,
+            client_cipher_pem,
+            intermed_cipher_p12,
+            p12_pin,
+            tamper,
+            None,
+        )
+    }
+
+    /// Inner wiring with an optional TLS server certificate (leaf key +
+    /// cert, both PEM). When set, the accepted TCP streams are wrapped in
+    /// a rustls server session — the HTTPS mock variant.
+    #[allow(clippy::too_many_arguments)]
+    fn start_inner(
+        dump_dir: Option<&Path>,
+        sign_key_pem: &Path,
+        sign_cert_pem: &Path,
+        client_cipher_pem: &Path,
+        intermed_cipher_p12: &Path,
+        p12_pin: &str,
+        tamper: bool,
+        tls: Option<(&Path, &Path)>,
+    ) -> std::io::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let port = listener.local_addr()?.port();
 
@@ -152,12 +178,75 @@ impl MockIntermediary {
         let keepalive = Arc::new(AtomicBool::new(true));
         let keep = keepalive.clone();
         let dump_seq = Arc::new(AtomicUsize::new(0));
-        std::thread::spawn(move || {
-            for stream in listener.incoming().flatten() {
+        let tls_config: Option<Arc<rustls::ServerConfig>> = match tls {
+            Some((key_pem, cert_pem)) => {
+                let _ = rustls::crypto::ring::default_provider().install_default();
+                let certs: Vec<rustls::pki_types::CertificateDer<'static>> =
+                    Certificate::from_pem_bundle(&std::fs::read_to_string(cert_pem).map_err(
+                        |e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()),
+                    )?)
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+                    })?
+                    .into_iter()
+                    .map(|c| rustls::pki_types::CertificateDer::from(c.der().to_vec()))
+                    .collect();
+                // PEM → DER: strip armor, base64-decode the body (the
+                // gen-pki keys are PKCS#8)
+                let key_pem_text = std::fs::read_to_string(key_pem).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+                })?;
+                let b64: String = key_pem_text
+                    .lines()
+                    .filter(|l| !l.starts_with("-----") && !l.trim().is_empty())
+                    .collect();
+                let key_der = base64::decode(&b64).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+                })?;
+                let key = rustls::pki_types::PrivateKeyDer::from(
+                    rustls::pki_types::PrivatePkcs8KeyDer::from(key_der),
+                );
+                Some(Arc::new(
+                    rustls::ServerConfig::builder_with_provider(
+                        rustls::crypto::ring::default_provider().into(),
+                    )
+                    .with_safe_default_protocol_versions()
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+                    })?
+                    .with_no_client_auth()
+                    .with_single_cert(certs, key)
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+                    })?,
+                ))
+            }
+            None => None,
+        };
+        std::thread::spawn(move || -> std::io::Result<()> {
+            for tcp in listener.incoming().flatten() {
                 if !keep.load(Ordering::Relaxed) {
                     break;
                 }
-                let mut stream = stream;
+                // TLS: drive the handshake to completion with explicit
+                // complete_io round-trips on the raw socket before framed
+                // reads — StreamOwned's lazy read alone cannot flush the
+                // ServerHello it owes.
+                let mut tcp = tcp;
+                let mut stream: Box<dyn StreamIo> = if let Some(config) = &tls_config {
+                    let mut conn = rustls::ServerConnection::new(config.clone()).map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+                    })?;
+                    loop {
+                        conn.complete_io(&mut tcp)?;
+                        if !conn.is_handshaking() && !conn.wants_write() {
+                            break;
+                        }
+                    }
+                    Box::new(rustls::StreamOwned::new(conn, tcp))
+                } else {
+                    Box::new(tcp)
+                };
                 let mut request = Vec::new();
                 let mut buf = [0u8; 8192];
                 loop {
@@ -173,6 +262,11 @@ impl MockIntermediary {
                     }
                 }
                 let body = body_of(&request).to_vec();
+                if body.is_empty() {
+                    // client hung up mid-request (pool probes, aborted
+                    // handshakes) — nothing to answer
+                    continue;
+                }
                 let n = dump_seq.fetch_add(1, Ordering::Relaxed) + 1;
                 let dump = dump_dir.as_deref().map(|dir| DumpContext {
                     dir: dir.to_path_buf(),
@@ -193,7 +287,9 @@ impl MockIntermediary {
                 );
                 let _ = stream.write_all(head.as_bytes());
                 let _ = stream.write_all(&response);
+                let _ = stream.flush();
             }
+            Ok(())
         });
         Ok(Self {
             port,
@@ -206,10 +302,35 @@ impl MockIntermediary {
         Self::start_simple(pki_dir, dump_dir)
     }
 
+    /// HTTPS variant: the same intermediary behind TLS, with
+    /// `intermed-cipher` as the server certificate (self-signed — the
+    /// client must trust it via `--tls-ca`/`Tls::trust_anchors`).
+    /// Proves the native transport's trust-anchor path on the wire.
+    pub fn start_tls(pki_dir: &Path, dump_dir: &Path) -> std::io::Result<Self> {
+        Self::start_inner(
+            Some(dump_dir),
+            &pki_dir.join("intermed-sign.key"),
+            &pki_dir.join("intermed-sign.pem"),
+            &pki_dir.join("client-cipher.pem"),
+            &pki_dir.join("intermed-cipher.p12"),
+            "testpin",
+            false,
+            Some((
+                &pki_dir.join("intermed-cipher.key"),
+                &pki_dir.join("intermed-cipher.pem"),
+            )),
+        )
+    }
+
     pub fn url(&self) -> String {
         format!("http://127.0.0.1:{}/osci/externalentry", self.port)
     }
 }
+
+/// Object-safe read+write for the per-connection stream (plain TCP or
+/// rustls-wrapped).
+trait StreamIo: Read + Write {}
+impl<T: Read + Write> StreamIo for T {}
 
 fn content_length(raw: &[u8]) -> Option<usize> {
     let header_end = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
