@@ -183,13 +183,13 @@ contact as above; pricing is contract-dependent.
 ### 5.3 Constraints relevant to this project
 
 - Order the **Software-Zertifikat**, never the Smartcard variant:
-  the bridge loads `PKCS12` keystores only
-  (`java/osci-bridge/.../CryptoMaterial.java`); there is no PKCS#11/HSM
-  support anywhere in the repo.
+  the stack loads `PKCS12` identity bundles only
+  (`crates/osci/src/p12.rs`); there is no PKCS#11/HSM support
+  anywhere in the repo.
 - The delivered PKCS#12 + PIN is a **bearer secret** — anyone holding
   both *is* that identity on the wire. Treat accordingly (the repo
   already gitignores all key material and zeroizes the PIN Rust-side;
-  JVM-side string residency remains, see AUDIT.md limitation 2).
+  transient crypto-layer copies remain, see AUDIT.md limitation 2).
 - Eligibility: the RA issues credentials to **Behörden or Dienstleister
   contracted by them**. A private project without such a mandate may be
   declined by the catch-all RA; in that case the certificate must be

@@ -118,9 +118,8 @@ impl E2e {
         cmd
         .env("OSCI_CERT_PIN", "testpin")
         .env("ROSCI_DEBUG", "1")
-        // The bridge renders OSCI timestamps in local time (the library's
-        // doing); the canned assertions are UTC. Inherit TZ through to the
-        // JVM so a CEST laptop and the UTC container assert the same thing.
+        // The canned assertions read UTC; inherit TZ so a CEST laptop
+        // and the UTC container assert the same thing.
         .env("TZ", "UTC")
         .current_dir(&self.workdir);
         cmd
