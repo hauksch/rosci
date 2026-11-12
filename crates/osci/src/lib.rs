@@ -36,25 +36,28 @@
 //! Error taxonomy and process exit codes: see [`Error`]. The wire protocol
 //! with the bridge is documented in `docs/PROTOCOL.md` and versioned.
 
-pub mod bridge;
 mod client;
 mod config;
 pub mod dvdv;
 mod error;
+/// The native OSCI client on the oscirs stack (no JVM sidecar).
+pub mod native;
+/// PKCS#12 keystore parsing feeding the native oscirs crypto SPIs.
+pub mod p12;
 // Wire types mirroring the Java side field-for-field; their contract is
 // documented normatively in docs/PROTOCOL.md, which is where it lives.
 #[allow(missing_docs)]
 pub mod protocol;
 mod xta;
 
-pub use bridge::{BridgeConfig, BridgeHandle};
 pub use client::{
-    default_jar_path, resolve_dvdv, url_host_is_loopback, FetchQuery, OsciClient, Recipient,
+    library_version, resolve_dvdv, url_host_is_loopback, FetchQuery, OsciClient, Recipient,
     SendBuilder,
 };
 pub use config::{read_certificate_file, Identity, Intermediary, Tls};
 pub use dvdv::{DvdvDirectory, DvdvEntry, FileDvdv};
 pub use error::{BridgeErrorKind, Error};
+pub use native::NativeClient;
 pub use protocol::{FetchedContent, FetchedMessage, ProcessCard, Receipt, VersionInfo};
 pub use xta::{read_all_stdin, sniff_root_element, Xta};
 

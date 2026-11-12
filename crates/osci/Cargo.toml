@@ -1,15 +1,34 @@
 [package]
-name = "osci"
-description = "Modern Rust API around the Governikus OSCI-Transport-1.2 Java library — the curl of OSCI."
+# Package name `rosci` (not `osci`): the oscirs stack it wraps ships a crate
+# literally named `osci`, and cargo cannot hold two same-named path packages
+# in one graph — the iteration [patch] needs both. The LIBRARY name stays
+# `osci`, so every `use osci::…` in dependents and tests is unchanged.
+name = "rosci"
+description = "Modern Rust API around the OSCI 1.2 transport — the curl of OSCI, backed by the native oscirs stack."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "osci"
+path = "src/lib.rs"
+
 [dependencies]
+# OSCI-Rust-Rewrite stack (dialogs, message compose/parse, crypto, transport).
+# Pinned by rev until oscirs starts tagging; bump via `cargo update -p osci_rs`.
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "3347252d79683812ef5345660ff1eedba47faad7" }
+osci_crypto = { package = "osci-crypto", git = "https://github.com/hauksch/oscirs", rev = "3347252d79683812ef5345660ff1eedba47faad7" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "3347252d79683812ef5345660ff1eedba47faad7" }
+osci_transport = { package = "osci-transport", git = "https://github.com/hauksch/oscirs", rev = "3347252d79683812ef5345660ff1eedba47faad7" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 base64 = { workspace = true }
+# PKCS#12 keystore parsing (the bridge identity format). Legacy OSCI
+# keystores use PBES1 3DES/RC2, so the legacy cipher features stay on.
+p12-keystore = "0.4"
+rand = "0.8"
+rsa = { version = "0.9.10", features = ["sha2"] }
 tracing = { workspace = true }
 zeroize = { workspace = true, features = ["serde"] }
 
@@ -23,3 +42,6 @@ expect_used = "warn"
 [dev-dependencies]
 tempfile = "3"
 proptest = { workspace = true }
+# Integration tests drive the oscirs types directly (scripted mock).
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "3347252d79683812ef5345660ff1eedba47faad7" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "3347252d79683812ef5345660ff1eedba47faad7" }

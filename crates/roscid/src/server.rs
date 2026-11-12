@@ -38,7 +38,6 @@ pub fn build_app(cfg: &ServerConfig) -> Result<Arc<App>, String> {
     let tls_ca = cfg.tls_ca.clone();
     let response_timeout = cfg.response_timeout;
     let insecure_transport = cfg.insecure_transport;
-    let jar = cfg.bridge_jar.clone();
 
     let build = move || -> Result<OsciClient, osci::Error> {
         let intermed_cert =
@@ -58,9 +57,6 @@ pub fn build_app(cfg: &ServerConfig) -> Result<Arc<App>, String> {
         };
         if let Some(ca) = &tls_ca {
             builder = builder.tls(osci::Tls::default().with_trust_anchor_file(ca)?);
-        }
-        if let Some(jar) = &jar {
-            builder = builder.bridge_config(osci::BridgeConfig::java_jar(jar));
         }
         if insecure_transport {
             builder = builder.insecure_transport();

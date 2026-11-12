@@ -1,14 +1,10 @@
-//! End-to-end: the real `osci` binary + the real Java bridge jar + the
-//! mock intermediary on localhost. No internet, no traces, no mercy.
-//!
-//! Skips gracefully when java/openssl or the jars are unavailable (host
-//! development); inside the builder container `make test` provides all of
-//! them. Network endpoints touched: 127.0.0.1 only.
+//! End-to-end: the real `rosci` binary against the in-process mock
+//! intermediary (crates/testsupport). No internet, no jars, no mercy.
+//! Network endpoints touched: 127.0.0.1 only.
 
-use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
 use assert_cmd::Command as AssertCommand;
@@ -18,95 +14,31 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-struct MockIntermediary {
-    child: Child,
-    port: u16,
-}
+/// The in-process mock intermediary (crates/testsupport) — same role the
+/// Java osci-mock jar used to play, without the JVM.
+struct MockIntermediary(testsupport::MockIntermediary);
 
 impl MockIntermediary {
+    fn start_tampering(pki_dir: &Path, dump_dir: &Path) -> Option<Self> {
+        Some(Self(
+            testsupport::MockIntermediary::start_tampering(pki_dir, dump_dir)
+                .expect("tampering mock intermediary starts"),
+        ))
+    }
+
     fn start(dump_dir: &Path) -> Option<Self> {
-        Self::start_with(dump_dir, &[])
+        Some(Self(
+            testsupport::MockIntermediary::start_with_pki(
+                dump_dir.parent().expect("dump dir has a pki parent"),
+                dump_dir,
+            )
+            .expect("mock intermediary starts"),
+        ))
     }
 
-    fn start_with(dump_dir: &Path, extra_args: &[&str]) -> Option<Self> {
-        let jar = repo_root().join("java/osci-mock/target/osci-mock.jar");
-        if !jar.is_file() || which_java().is_none() {
-            eprintln!("e2e: skipping (mock jar or java missing)");
-            return None;
-        }
-        let port = free_port();
-        let mut cmd = Command::new(which_java().unwrap());
-        cmd.arg("-jar")
-            .arg(&jar)
-            .arg(port.to_string())
-            .arg(dump_dir.to_str().unwrap());
-        // With the intermediary keys on board, the mock decrypts
-        // transport-encrypted requests, encrypts responses back, and signs
-        // every response like a proper intermediary.
-        let pki = dump_dir.parent().map(|p| p.to_path_buf());
-        let key = pki.as_ref().map(|p| p.join("intermed-cipher.key"));
-        if let Some(key) = key.filter(|k| k.is_file()) {
-            cmd.arg("--key").arg(key);
-        }
-        let sign_key = pki.as_ref().map(|p| p.join("intermed-sign.key"));
-        let sign_cert = pki.as_ref().map(|p| p.join("intermed-sign.pem"));
-        if let Some(k) = sign_key.filter(|k| k.is_file()) {
-            cmd.arg("--sign-key").arg(k).arg("--sign-cert").arg(
-                sign_cert
-                    .filter(|c| c.is_file())
-                    .expect("sign cert next to sign key"),
-            );
-        }
-        cmd.args(extra_args);
-        let mut child = cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .expect("spawn mock intermediary");
-
-        // Wait for READY with a deadline — a JVM that never wakes up is a
-        // test failure, not a coffee break.
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        let mut ready = String::new();
-        {
-            let stdout = child.stdout.take().expect("piped stdout");
-            let mut reader = BufReader::new(stdout);
-            loop {
-                if std::time::Instant::now() > deadline {
-                    panic!("mock intermediary did not report READY in time");
-                }
-                ready.clear();
-                if reader.read_line(&mut ready).unwrap_or(0) == 0 {
-                    panic!("mock intermediary exited before READY");
-                }
-                if ready.starts_with("READY") {
-                    break;
-                }
-            }
-        }
-        Some(Self { child, port })
+    fn url(&self) -> String {
+        self.0.url()
     }
-
-    pub(crate) fn url(&self) -> String {
-        format!(
-            "http://127.0.0.1:{}/osci-manager-entry/externalentry",
-            self.port
-        )
-    }
-}
-
-impl Drop for MockIntermediary {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn which_java() -> Option<String> {
-    ["java", "/usr/bin/java"]
-        .iter()
-        .find(|c| Command::new(c).arg("-version").output().is_ok())
-        .map(|c| c.to_string())
 }
 
 fn free_port() -> u16 {
@@ -124,16 +56,13 @@ fn free_port() -> u16 {
 
 struct E2e {
     workdir: PathBuf,
+    /// https endpoint when the mock runs behind rustls (empty otherwise)
+    tls_url: String,
     _pki_cleanup: tempfile::TempDir,
 }
 
 impl E2e {
     fn setup() -> Option<(Self, MockIntermediary)> {
-        let bridge_jar = repo_root().join("java/osci-bridge/target/osci-bridge.jar");
-        if !bridge_jar.is_file() || which_java().is_none() {
-            eprintln!("e2e: skipping (bridge jar or java missing)");
-            return None;
-        }
         if Command::new("openssl").arg("version").output().is_err() {
             eprintln!("e2e: skipping (openssl missing)");
             return None;
@@ -154,6 +83,7 @@ impl E2e {
         let workdir = pki_dir.path().to_path_buf();
         let e2e = Self {
             workdir: workdir.clone(),
+            tls_url: String::new(),
             _pki_cleanup: pki_dir,
         };
 
@@ -182,18 +112,42 @@ impl E2e {
         Some((e2e, mock))
     }
 
+    /// TLS variant: the mock behind rustls with the generated
+    /// intermed-cipher certificate; `tls_url` is the https endpoint.
+    fn tls_setup() -> Option<Self> {
+        if Command::new("openssl").arg("version").output().is_err() {
+            eprintln!("e2e: skipping (openssl missing)");
+            return None;
+        }
+
+        let pki_dir = tempfile::tempdir().expect("pki tempdir");
+        let status = Command::new(repo_root().join("tests/gen-pki.sh"))
+            .arg(pki_dir.path())
+            .status()
+            .expect("run gen-pki.sh");
+        assert!(status.success(), "PKI generation failed");
+
+        let dump_dir = pki_dir.path().join("dump");
+        std::fs::create_dir_all(&dump_dir).unwrap();
+        let mock = testsupport::MockIntermediary::start_tls(pki_dir.path(), &dump_dir)
+            .expect("tls mock intermediary starts");
+
+        let workdir = pki_dir.path().to_path_buf();
+        Some(Self {
+            workdir: workdir.clone(),
+            tls_url: mock.url().replace("http://", "https://"),
+            _pki_cleanup: pki_dir,
+        })
+    }
+
     fn rosci(&self) -> AssertCommand {
         let mut cmd = AssertCommand::cargo_bin("rosci").unwrap();
-        cmd.env(
-            "OSCI_BRIDGE_JAR",
-            repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
-        )
-        .env("OSCI_CERT_PIN", "testpin")
-        // The bridge renders OSCI timestamps in local time (the library's
-        // doing); the canned assertions are UTC. Inherit TZ through to the
-        // JVM so a CEST laptop and the UTC container assert the same thing.
-        .env("TZ", "UTC")
-        .current_dir(&self.workdir);
+        cmd.env("OSCI_CERT_PIN", "testpin")
+            .env("ROSCI_DEBUG", "1")
+            // The canned assertions read UTC; inherit TZ so a CEST laptop
+            // and the UTC container assert the same thing.
+            .env("TZ", "UTC")
+            .current_dir(&self.workdir);
         cmd
     }
 }
@@ -204,7 +158,7 @@ fn send_fetch_status_against_mock_intermediary() {
         return;
     };
 
-    // --- version handshake includes the jar fingerprint -----------------
+    // --- version handshake reports the native stack ----------------------
     let version_out = e2e
         .rosci()
         .arg("version")
@@ -215,10 +169,8 @@ fn send_fetch_status_against_mock_intermediary() {
         .clone();
     let version_text = String::from_utf8_lossy(&version_out);
     assert!(
-        version_text.lines().any(|l| {
-            l.starts_with("jar_sha256") && l[l.find(' ').unwrap_or(0)..].trim().len() == 64
-        }),
-        "version must report a 64-hex jar fingerprint: {version_text}"
+        version_text.contains("oscirs") && version_text.contains("protocol"),
+        "version must report the native stack: {version_text}"
     );
 
     // --- send via DVDV resolution, full crypto path ---------------------
@@ -343,7 +295,9 @@ fn send_fetch_status_against_mock_intermediary() {
         .stdout
         .clone();
     let messages: serde_json::Value = serde_json::from_slice(&json_out).expect("fetch json");
-    let contents = messages[0]["contents"].as_array().expect("contents");
+    let contents = messages[0]["contents"]
+        .as_array()
+        .unwrap_or_else(|| panic!("messages[0] has no contents: {messages}"));
     assert!(
         !contents.is_empty(),
         "fetch json must carry content entries"
@@ -693,6 +647,80 @@ fn send_with_attachments() {
     );
 }
 
+/// HTTPS: the mock behind rustls with the generated (self-signed)
+/// intermediary certificate; rosci must present `--tls-ca` and the full
+/// crypto send must succeed over TLS — trust anchors from the native
+/// transport's `HttpTransportTls`, proven on the wire.
+#[test]
+fn send_over_tls_with_trust_anchor() {
+    let Some(e2e) = E2e::tls_setup() else {
+        return;
+    };
+    std::fs::write(
+        e2e.workdir.join("meldung.xta"),
+        "<?xml version=\"1.0\"?><XTA><meldung>tls verbindung</meldung></XTA>",
+    )
+    .unwrap();
+
+    e2e.rosci()
+        .arg("send")
+        .arg("meldung.xta")
+        .args(["--to", "cert:recipient-cipher.pem"])
+        .args(["--intermediary", &e2e.tls_url])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--tls-ca", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--subject")
+        .arg("tls sendung")
+        .arg("--json")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .success();
+}
+
+/// Negative: the same TLS endpoint WITHOUT `--tls-ca` — ureq's default
+/// roots cannot validate the self-signed intermediary certificate, and
+/// the failure must be loud, not a silent plaintext fallback.
+#[test]
+fn send_over_tls_without_trust_anchor_fails() {
+    let Some(e2e) = E2e::tls_setup() else {
+        return;
+    };
+    std::fs::write(
+        e2e.workdir.join("meldung.xta"),
+        "<?xml version=\"1.0\"?><XTA><meldung>keine ca</meldung></XTA>",
+    )
+    .unwrap();
+
+    let output = e2e
+        .rosci()
+        .arg("send")
+        .arg("meldung.xta")
+        .args(["--to", "cert:recipient-cipher.pem"])
+        .args(["--intermediary", &e2e.tls_url])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .args(["--decrypter-cert", "client-cipher.p12"])
+        .arg("--subject")
+        .arg("keine ca sendung")
+        .arg("--json")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("certificate") || stderr.contains("tls") || stderr.contains("TLS"),
+        "TLS failure must name the certificate problem: {stderr}"
+    );
+}
+
+/// A dedicated mock that signs correctly and then flips one byte of the
+/// SignatureValue. The client library verifies automatically; the CLI
+/// must fail with a transport/OSCI exit code and a message naming the
+/// problem — anything else would mean verification is decorative.
 #[test]
 fn tampered_response_signature_is_rejected_loudly() {
     // A dedicated mock that signs correctly and then flips one byte of the
@@ -713,34 +741,29 @@ fn tampered_response_signature_is_rejected_loudly() {
         "<?xml version=\"1.0\"?><XTA>signatur-pruefung</XTA>",
     )
     .unwrap();
-    let Some(mock) = MockIntermediary::start_with(&dump_dir, &["--tamper-signature"]) else {
-        return;
-    };
+    let mock = MockIntermediary::start_tampering(pki_dir.path(), &dump_dir)
+        .expect("tampering mock starts");
 
     let mut cmd = AssertCommand::cargo_bin("rosci").unwrap();
-    cmd.env(
-        "OSCI_BRIDGE_JAR",
-        repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
-    )
-    .env("OSCI_CERT_PIN", "testpin")
-    .env("TZ", "UTC")
-    .current_dir(pki_dir.path())
-    .arg("send")
-    .arg("meldung.xta")
-    .args(["--to", "cert:recipient-cipher.pem"])
-    .args(["--intermediary", &mock.url()])
-    .args(["--intermediary-cert", "intermed-cipher.pem"])
-    .args(["--cert", "client-sign.p12"])
-    .arg("--insecure-transport")
-    .timeout(Duration::from_secs(180))
-    .assert()
-    .failure()
-    .code(4)
-    .stderr(
-        predicates::str::contains("Signature")
-            .or(predicate::str::contains("signatur"))
-            .or(predicate::str::contains("Signatur")),
-    );
+    cmd.env("OSCI_CERT_PIN", "testpin")
+        .env("TZ", "UTC")
+        .current_dir(pki_dir.path())
+        .arg("send")
+        .arg("meldung.xta")
+        .args(["--to", "cert:recipient-cipher.pem"])
+        .args(["--intermediary", &mock.url()])
+        .args(["--intermediary-cert", "intermed-cipher.pem"])
+        .args(["--cert", "client-sign.p12"])
+        .arg("--insecure-transport")
+        .timeout(Duration::from_secs(180))
+        .assert()
+        .failure()
+        .code(4)
+        .stderr(
+            predicates::str::contains("Signature")
+                .or(predicate::str::contains("signatur"))
+                .or(predicate::str::contains("Signatur")),
+        );
 }
 
 /// Spec §7 obligation (2): rosci's wire traffic must be schema-conform.

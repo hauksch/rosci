@@ -5,7 +5,6 @@ use std::path::Path;
 use zeroize::Zeroizing;
 
 use crate::error::Error;
-use crate::protocol::{IdentityMsg, Party, TlsMsg};
 
 /// The intermediary (Kommunikationsserver) everything is sent through.
 #[derive(Debug, Clone, Default)]
@@ -25,14 +24,6 @@ impl Intermediary {
             url: url.into(),
             cipher_cert: cipher_cert.into(),
             signature_cert: None,
-        }
-    }
-
-    pub(crate) fn to_msg(&self) -> Party {
-        Party {
-            url: Some(self.url.clone()),
-            cipher_cert: Some(self.cipher_cert.clone()),
-            signature_cert: self.signature_cert.clone(),
         }
     }
 }
@@ -94,28 +85,67 @@ impl Identity {
         })
     }
 
-    pub(crate) fn to_msg(&self) -> IdentityMsg {
-        IdentityMsg {
-            signer_p12: Some(self.signer_p12_b64.clone()),
-            signer_pin: Some(self.signer_pin.clone()),
-            decrypter_p12: self.decrypter_p12_b64.clone(),
-            decrypter_pin: self.decrypter_pin.clone(),
+    /// Identity from in-memory PKCS#12 bytes (the native client's path —
+    /// no temp files on disk, the bytes are base64'd once and scrubbed on
+    /// drop like the file-based variant).
+    pub fn from_p12_b64(
+        signer_p12_b64: impl Into<String>,
+        signer_pin: &str,
+        decrypter_p12_b64: Option<String>,
+        decrypter_pin: Option<&str>,
+    ) -> Result<Self, Error> {
+        let signer_p12_b64 = signer_p12_b64.into();
+        if signer_p12_b64.is_empty() {
+            return Err(Error::Config("empty signer PKCS#12".into()));
+        }
+        Ok(Self {
+            signer_p12_b64,
+            signer_pin: Zeroizing::new(signer_pin.to_string()),
+            decrypter_p12_b64,
+            decrypter_pin: decrypter_pin.map(|p| Zeroizing::new(p.to_string())),
+        })
+    }
+
+    /// The signer keystore, base64-decoded, and its PIN. Accepts both
+    /// standard and MIME-wrapped base64 (the Java decoder was lenient; the
+    /// native one must read the same files).
+    pub(crate) fn signer_material(&self) -> Result<(Vec<u8>, String), Error> {
+        let der = decode_lenient_base64(&self.signer_p12_b64)
+            .map_err(|e| Error::Config(format!("signer PKCS#12 base64: {e}")))?;
+        Ok((der, self.signer_pin.clone().to_string()))
+    }
+
+    /// The decrypter keystore, base64-decoded, and its PIN — falling back
+    /// to the signer bundle when no separate decrypter was configured
+    /// (the Java bridge's same fallback).
+    pub(crate) fn decrypter_material(&self) -> Result<(Vec<u8>, String), Error> {
+        match (&self.decrypter_p12_b64, &self.decrypter_pin) {
+            (Some(p12), Some(pin)) => {
+                let der = decode_lenient_base64(p12)
+                    .map_err(|e| Error::Config(format!("decrypter PKCS#12 base64: {e}")))?;
+                Ok((der, pin.clone().to_string()))
+            }
+            _ => self.signer_material(),
         }
     }
 }
 
-/// TLS knobs passed straight through to the bridge transport.
+/// TLS knobs for the native transport: trust anchors and mutual-TLS
+/// client identity, parsed and applied at builder time.
 #[derive(Clone, Default)]
 pub struct Tls {
-    /// Additional trust anchors (PEM / base64 DER). Empty = system store.
+    /// Trust anchors (PEM or base64 DER). Non-empty REPLACES the default
+    /// root set — for intermediaries under a self-managed CA.
     pub trust_anchors: Vec<String>,
-    /// TLS client authentication bundle (base64 PKCS#12).
+    /// TLS client authentication bundle (base64 PKCS#12); its leaf
+    /// certificate chain and private key become the client identity.
     pub client_p12_b64: Option<String>,
     /// PIN for the TLS client bundle.
     pub client_pin: Option<Zeroizing<String>>,
-    /// TCP connect timeout in milliseconds.
+    /// TCP connect timeout in milliseconds (reserved; the native
+    /// transport applies one global request timeout).
     pub connect_timeout_ms: Option<u64>,
-    /// Socket read timeout in milliseconds.
+    /// Socket read timeout in milliseconds (reserved; ditto).
     pub read_timeout_ms: Option<u64>,
 }
 
@@ -158,20 +188,16 @@ impl Tls {
         self.client_pin = Some(Zeroizing::new(pin.to_string()));
         Ok(self)
     }
+}
 
-    pub(crate) fn to_msg(&self) -> TlsMsg {
-        TlsMsg {
-            trust_anchors: if self.trust_anchors.is_empty() {
-                None
-            } else {
-                Some(self.trust_anchors.clone())
-            },
-            client_p12: self.client_p12_b64.clone(),
-            client_pin: self.client_pin.clone(),
-            connect_timeout_ms: self.connect_timeout_ms,
-            read_timeout_ms: self.read_timeout_ms,
-        }
-    }
+/// Base64 that tolerates line wrapping — the wire/keystore format was
+/// MIME-flavoured for years and files in the wild carry the newlines.
+fn decode_lenient_base64(input: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine as _;
+    let clean: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    base64::engine::general_purpose::STANDARD
+        .decode(clean.as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 /// Reads a certificate file for the bridge, which consumes PEM *or*
@@ -277,30 +303,6 @@ mod tests {
     }
 
     #[test]
-    fn tls_client_p12_lands_base64_encoded_in_the_msg() {
-        let dir = tempfile::tempdir().unwrap();
-        let p12 = dir.path().join("client.p12");
-        // Parsing happens JVM-side; Rust-side this is a base64 pass-through,
-        // so the bytes only need to survive the round trip.
-        std::fs::write(&p12, [0x42u8, 0x00, 0x13, 0x37]).unwrap();
-        let tls = Tls::default()
-            .with_client_p12_file(&p12, "tls-pin")
-            .unwrap();
-        let msg = tls.to_msg();
-        use base64::Engine as _;
-        assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(msg.client_p12.as_deref().unwrap())
-                .unwrap(),
-            [0x42u8, 0x00, 0x13, 0x37]
-        );
-        assert_eq!(
-            msg.client_pin.as_deref().map(|p| p.as_str()),
-            Some("tls-pin")
-        );
-    }
-
-    #[test]
     fn tls_client_p12_missing_file_is_a_config_error() {
         let err = Tls::default()
             .with_client_p12_file(std::path::Path::new("/gibt-es-nicht/client.p12"), "x")
@@ -318,17 +320,5 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, Error::Config(ref c) if c.contains("cannot read")));
-    }
-
-    #[test]
-    fn tls_msg_omits_empty_trust_anchors() {
-        let msg = Tls::default().to_msg();
-        assert!(msg.trust_anchors.is_none());
-        let msg = Tls {
-            trust_anchors: vec!["CERT".into()],
-            ..Tls::default()
-        }
-        .to_msg();
-        assert_eq!(msg.trust_anchors.unwrap(), vec!["CERT".to_string()]);
     }
 }

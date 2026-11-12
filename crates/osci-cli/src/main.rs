@@ -8,9 +8,7 @@ use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use base64::Engine as _;
 use clap::{Args, Parser, Subcommand};
-use osci::bridge::{BridgeConfig, BridgeHandle};
 use osci::dvdv::{DvdvDirectory, FileDvdv};
 use osci::{Error, FetchQuery, Identity, Intermediary, OsciClient, Recipient, Xta};
 
@@ -48,7 +46,7 @@ enum Cmd {
     Status(StatusArgs),
     /// Look up recipients in a DVDV extract.
     Dvdv(DvdvArgs),
-    /// Print local and bridge version info.
+    /// Print version info for the binary, wire protocol and stack.
     Version(VersionArgs),
 }
 
@@ -108,15 +106,6 @@ struct ConnArgs {
     /// If you type this flag, you are the audit finding.
     #[arg(long, requires = "insecure_transport")]
     insecure_transport_any_host: bool,
-
-    /// Path to the osci-bridge.jar. Default: ../lib/osci-bridge.jar next
-    /// to the rosci binary (the release layout), else ./osci-bridge.jar.
-    #[arg(long, env = "OSCI_BRIDGE_JAR")]
-    bridge_jar: Option<PathBuf>,
-
-    /// Full bridge command, space separated (testing hook).
-    #[arg(long, env = "OSCI_BRIDGE_CMD", hide = true)]
-    bridge_cmd: Option<String>,
 }
 
 #[derive(Args)]
@@ -332,24 +321,6 @@ fn load_pin(conn: &ConnArgs) -> Result<zeroize::Zeroizing<String>, Error> {
         })
 }
 
-fn bridge_config(conn: &ConnArgs) -> BridgeConfig {
-    if let Some(cmd) = &conn.bridge_cmd {
-        return BridgeConfig::cmd(cmd.split_whitespace());
-    }
-    BridgeConfig::java_jar(resolve_bridge_jar(conn.bridge_jar.as_deref()))
-}
-
-/// An explicit `--bridge-jar`/`OSCI_BRIDGE_JAR` wins; otherwise the
-/// library's default resolution runs (release layout next to the binary,
-/// then cwd). Going through the CLI default used to pin a cwd-relative
-/// path and defeated that lookup entirely.
-fn resolve_bridge_jar(arg: Option<&std::path::Path>) -> PathBuf {
-    match arg {
-        Some(path) => path.to_path_buf(),
-        None => osci::default_jar_path(),
-    }
-}
-
 fn build_client(conn: &ConnArgs, intermediary: Option<Intermediary>) -> Result<OsciClient, Error> {
     if let Some(intermediary) = &intermediary {
         check_insecure_guard(conn, &intermediary.url)?;
@@ -364,9 +335,7 @@ fn build_client(conn: &ConnArgs, intermediary: Option<Intermediary>) -> Result<O
         Some(&pin),
     )?;
 
-    let mut builder = OsciClient::builder()
-        .bridge_config(bridge_config(conn))
-        .identity(identity);
+    let mut builder = OsciClient::builder().identity(identity);
 
     if conn.insecure_transport {
         builder = builder.insecure_transport();
@@ -460,9 +429,7 @@ fn cmd_send(args: SendArgs) -> Result<(), Error> {
         Some(&pin),
     )?;
 
-    let mut builder = OsciClient::builder()
-        .bridge_config(bridge_config(&args.conn))
-        .identity(identity);
+    let mut builder = OsciClient::builder().identity(identity);
     if args.conn.insecure_transport {
         builder = builder.insecure_transport();
     }
@@ -529,7 +496,6 @@ fn cmd_fetch(args: FetchArgs) -> Result<(), Error> {
         return Ok(());
     }
 
-    let engine = base64::engine::general_purpose::STANDARD;
     let out_dir = args.out.unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| Error::Config(format!("cannot create {}: {e}", out_dir.display())))?;
@@ -549,8 +515,7 @@ fn cmd_fetch(args: FetchArgs) -> Result<(), Error> {
                     .filename
                     .clone()
                     .unwrap_or_else(|| format!("content-{wrote}.bin"));
-                let bytes = engine
-                    .decode(&content.data)
+                let bytes = decode_mime_base64(&content.data)
                     .map_err(|e| Error::BridgeProtocol(format!("bridge sent bad base64: {e}")))?;
                 let path = write_fetched_file(&out_dir, &name, &bytes)?;
                 println!("  wrote {} ({} bytes)", path.display(), bytes.len());
@@ -636,50 +601,11 @@ fn cmd_dvdv(args: DvdvArgs) -> Result<(), Error> {
     Ok(())
 }
 
-fn cmd_version(args: VersionArgs) -> Result<(), Error> {
+fn cmd_version(_args: VersionArgs) -> Result<(), Error> {
     println!("rosci      {}", env!("CARGO_PKG_VERSION"));
-
-    // A bare bridge ping — no identity, no intermediary, no drama.
-    let cfg = match std::env::var("OSCI_BRIDGE_CMD") {
-        Ok(cmd) => BridgeConfig::cmd(cmd.split_whitespace()),
-        // default_jar_path() consults OSCI_BRIDGE_JAR itself, then the
-        // release layout next to this binary, then the cwd.
-        Err(_) => BridgeConfig::java_jar(osci::default_jar_path()),
-    };
-    match BridgeHandle::spawn(&cfg) {
-        Ok(mut bridge) => {
-            let rsp = bridge.call(osci::protocol::Request {
-                id: String::new(),
-                op: "ping",
-                intermediary: None,
-                identity: None,
-                recipient: None,
-                subject: None,
-                content: None,
-                attachments: None,
-                chunk_size_kb: None,
-                metadata_author: None,
-                metadata_reader: None,
-                sign: None,
-                encrypt: None,
-                insecure_transport: None,
-                tls: None,
-                selection_mode: None,
-                selection_rule: None,
-            })?;
-            if let Some(versions) = rsp.result.and_then(|r| r.versions) {
-                for (k, v) in versions {
-                    println!("{k:<11} {v}");
-                }
-            }
-            bridge.shutdown();
-            let _ = bridge.wait();
-        }
-        Err(err) if !args.require_bridge => {
-            eprintln!("rosci: bridge not reachable, local info only ({err})");
-        }
-        Err(err) => return Err(err),
-    }
+    // The version table is local: no dialog, no keystores.
+    println!("protocol   {}", osci::protocol::PROTOCOL_VERSION);
+    println!("library    {}", osci::library_version());
     Ok(())
 }
 
@@ -738,6 +664,15 @@ fn sanitize_filename(name: &str) -> String {
 /// that includes a pre-planted symlink — `create_new` refuses those too)
 /// gets a numbered sibling instead. The intermediary chooses the filename;
 /// it does not get to clobber your `.bashrc` with it.
+/// Base64 from the wire may be MIME-wrapped (76-char lines) — the
+/// intermediary writes what the spec's writer writes; strip whitespace
+/// before the strict engine.
+fn decode_mime_base64(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    use base64::Engine as _;
+    let clean: String = data.chars().filter(|c| !c.is_whitespace()).collect();
+    base64::engine::general_purpose::STANDARD.decode(clean.as_bytes())
+}
+
 fn write_fetched_file(
     out_dir: &std::path::Path,
     name: &str,
@@ -903,27 +838,6 @@ mod conn_tls_tests {
         let tls = conn_tls(&conn).unwrap().expect("tls configured");
         assert_eq!(tls.trust_anchors.len(), 1);
         assert!(tls.client_p12_b64.is_some());
-    }
-}
-
-#[cfg(test)]
-mod jar_resolution_tests {
-    use super::resolve_bridge_jar;
-    use std::path::{Path, PathBuf};
-
-    #[test]
-    fn explicit_jar_wins_over_library_default() {
-        let p = resolve_bridge_jar(Some(Path::new("/opt/dist/lib/osci-bridge.jar")));
-        assert_eq!(p, PathBuf::from("/opt/dist/lib/osci-bridge.jar"));
-    }
-
-    #[test]
-    fn absent_jar_defers_to_the_library_default() {
-        // The library resolves OSCI_BRIDGE_JAR, then the exe-relative
-        // release layout, then cwd — the exact chain the CLI used to
-        // short-circuit with a cwd-relative default_value.
-        let p = resolve_bridge_jar(None);
-        assert_eq!(p, osci::default_jar_path());
     }
 }
 

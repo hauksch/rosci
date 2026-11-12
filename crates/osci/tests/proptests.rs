@@ -7,16 +7,16 @@
 
 use proptest::prelude::*;
 
-use osci::protocol::Response;
+use osci::protocol::FetchedMessage;
 use osci::sniff_root_element;
 
 proptest! {
-    /// The bridge reader feeds arbitrary stdout lines into
-    /// `serde_json::from_str::<Response>`; garbage must be an Err, never a
-    /// panic. This is the parse path every real invocation relies on.
+    /// Arbitrary input fed into `serde_json::from_str::<FetchedMessage>`;
+    /// garbage must be an Err, never a panic. This is the parse path every
+    /// REST client response relies on.
     #[test]
-    fn response_parse_never_panics(input in "\\PC*") {
-        let _ = serde_json::from_str::<Response>(&input);
+    fn fetched_message_parse_never_panics(input in "\\PC*") {
+        let _ = serde_json::from_str::<FetchedMessage>(&input);
     }
 
     /// Arbitrary XML-ish prologues (declarations, comments, PIs, doctypes,

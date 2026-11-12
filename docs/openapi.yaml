@@ -4,8 +4,8 @@ info:
   description: |
     REST surface of the roscid server. Every operation maps 1:1 to the
     CLI's capabilities; the OSCI-Transport 1.2 wire protocol is unchanged
-    (docs/REST-API.md is the normative contract).
-  version: 0.4.0
+    (docs/REST-API.md is the normative contract). Native stack, no JVM.
+  version: 0.5.0
 servers:
   - url: http://127.0.0.1:8080
 security:
@@ -27,15 +27,15 @@ paths:
                     example: ok
   /readyz:
     get:
-      summary: Readiness (pings the bridge; requires auth)
+      summary: Readiness (warm client + parseable identity; requires auth)
       responses:
         "200":
-          description: bridge answers
+          description: warm client ready
         "503":
-          description: bridge not answering; error envelope in body
+          description: identity broken or client unbuildable; error envelope in body
   /v1/version:
     get:
-      summary: Version handshake (bridge, JVM, OSCI library, protocol)
+      summary: Version map (rosci, wire protocol, oscirs stack)
       responses:
         "200":
           description: map of component → version

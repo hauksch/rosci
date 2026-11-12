@@ -1,4 +1,4 @@
-//! REST e2e: the real `roscid` binary + real bridge jar + real mock
+//! REST e2e: the real `roscid` binary against the in-process mock
 //! intermediary — the full server surface driven over HTTP. Ground rules:
 //! 127.0.0.1 only, no interop contact (that is the gated interop suite's
 //! job).
@@ -15,22 +15,8 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn which_java() -> Option<String> {
-    ["java", "/usr/bin/java"]
-        .iter()
-        .find(|c| Command::new(c).arg("-version").output().is_ok())
-        .map(|c| c.to_string())
-}
-
 struct Mock {
-    child: Child,
-}
-
-impl Drop for Mock {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
+    inner: testsupport::MockIntermediary,
 }
 
 struct Roscid {
@@ -78,13 +64,6 @@ struct Smoke {
 /// TempDir guard especially must not be dropped inside setup, or the
 /// certs vanish before the tests read them.
 fn setup() -> Option<Smoke> {
-    let bridge_jar = repo_root().join("java/osci-bridge/target/osci-bridge.jar");
-    let mock_jar = repo_root().join("java/osci-mock/target/osci-mock.jar");
-    if !bridge_jar.is_file() || !mock_jar.is_file() || which_java().is_none() {
-        eprintln!("rest-e2e: skipping (jars or java missing — make build first)");
-        return None;
-    }
-
     let pki_guard = tempfile::tempdir().expect("pki tempdir");
     let pki = pki_guard.path().to_path_buf();
     let status = Command::new(repo_root().join("tests/gen-pki.sh"))
@@ -95,33 +74,15 @@ fn setup() -> Option<Smoke> {
 
     let dump_dir = pki.join("dump");
     std::fs::create_dir_all(&dump_dir).unwrap();
-    let mock_port = free_port();
-    let mock_log = std::fs::File::create(pki.join("mock.log")).unwrap();
-    #[allow(clippy::zombie_processes)] // Mock::drop kills + reaps
     let mock = Mock {
-        child: Command::new(which_java().unwrap())
-            .arg("-jar")
-            .arg(&mock_jar)
-            .arg(mock_port.to_string())
-            .arg(&dump_dir)
-            .arg("--key")
-            .arg(pki.join("intermed-cipher.key"))
-            .arg("--sign-key")
-            .arg(pki.join("intermed-sign.key"))
-            .arg("--sign-cert")
-            .arg(pki.join("intermed-sign.pem"))
-            .stdout(Stdio::null())
-            .stderr(Stdio::from(mock_log))
-            .spawn()
-            .expect("spawn mock intermediary"),
+        inner: testsupport::MockIntermediary::start_simple(&pki, &dump_dir)
+            .expect("mock intermediary starts"),
     };
-
-    wait_for_port(&format!("127.0.0.1:{mock_port}"), "mock intermediary");
+    let mock_port = mock.inner.port;
 
     // roscid submits through the mock; recipient addressed by inline cert.
     let rosci_port = free_port();
     let roscid_child = Command::new(env!("CARGO_BIN_EXE_roscid"))
-        .env("OSCI_BRIDGE_JAR", &bridge_jar)
         .env("OSCI_CERT_PIN", DEMO_PIN)
         .arg("--bind")
         .arg(format!("127.0.0.1:{rosci_port}"))
@@ -157,16 +118,10 @@ fn setup() -> Option<Smoke> {
 }
 
 /// Spawns a second roscid outside the Smoke setup — used for the auth and
-/// dead-bridge scenarios that need their own flag set. `jar` overrides the
-/// bridge jar (a nonexistent path yields a server that can never get a
-/// bridge); the placeholder intermediary is never contacted by these
-/// scenarios.
+/// dead-intermediary scenarios that need their own flag set. The
+/// placeholder intermediary is never contacted by these scenarios.
 fn spawn_roscid(dir: &std::path::Path, bind: &str, extra: &[&str]) -> Child {
     Command::new(env!("CARGO_BIN_EXE_roscid"))
-        .env(
-            "OSCI_BRIDGE_JAR",
-            repo_root().join("java/osci-bridge/target/osci-bridge.jar"),
-        )
         .env("OSCI_CERT_PIN", DEMO_PIN)
         .arg("--bind")
         .arg(bind)
@@ -254,8 +209,8 @@ fn rest_server_healthz_readiness_and_version() {
     assert_eq!(status, 200, "readyz must be ready against the mock: {body}");
     assert_eq!(body.trim(), r#"{"status":"ready"}"#);
 
-    // The version route reports the real handshake, jar fingerprint
-    // included — the same contract the CLI's `version` prints.
+    // The version route reports the native stack — the same contract the
+    // CLI's `version` prints.
     let (status, body) = http("GET", &format!("{}/v1/version", smoke.base), None, None);
     assert_eq!(status, 200, "version failed: {body}");
     let versions: serde_json::Map<String, serde_json::Value> =
@@ -265,10 +220,11 @@ fn rest_server_healthz_readiness_and_version() {
         versions["bridge"].as_str().is_some_and(|v| !v.is_empty()),
         "bridge version missing: {body}"
     );
-    let jar_sha = versions["jar_sha256"].as_str().expect("jar_sha256");
     assert!(
-        jar_sha.len() == 64 && jar_sha.chars().all(|c| c.is_ascii_hexdigit()),
-        "jar_sha256 must be a 64-hex fingerprint: {body}"
+        versions["library"]
+            .as_str()
+            .is_some_and(|v| v.contains("oscirs")),
+        "native stack must be named: {body}"
     );
 }
 
@@ -379,21 +335,23 @@ fn rest_send_status_fetch_round_trip() {
 }
 
 #[test]
-fn rest_readyz_reports_503_when_the_bridge_is_dead() {
+fn rest_readyz_reports_503_when_the_identity_is_broken() {
     let Some(smoke) = setup() else { return };
     let dir = &smoke.dir;
-    // roscid binds eagerly but builds the bridge lazily — point it at a jar
-    // that does not exist and readiness must turn 503, never 200: probes
-    // and load balancers read the status code, not the body.
+    // roscid binds eagerly but builds the client lazily — hand it a
+    // garbage keystore and readiness must turn 503, never 200: probes and
+    // load balancers read the status code, not the body. (With no child
+    // process left, "not ready" means "configuration unusable".)
+    let broken = dir.join("broken-identity.p12");
+    std::fs::write(&broken, b"kein keystore, nur muell").unwrap();
     let port = free_port();
     #[allow(clippy::zombie_processes)] // killed + reaped below
     let mut child = Command::new(env!("CARGO_BIN_EXE_roscid"))
-        .env("OSCI_BRIDGE_JAR", dir.join("no-such-bridge.jar"))
         .env("OSCI_CERT_PIN", DEMO_PIN)
         .arg("--bind")
         .arg(format!("127.0.0.1:{port}"))
         .arg("--cert")
-        .arg(dir.join("client-sign.p12"))
+        .arg(&broken)
         .arg("--decrypter-cert")
         .arg(dir.join("client-cipher.p12"))
         .arg("--intermediary")
@@ -408,12 +366,15 @@ fn rest_readyz_reports_503_when_the_bridge_is_dead() {
         .expect("spawn roscid");
 
     let base = format!("http://127.0.0.1:{port}");
-    wait_for_port(&format!("127.0.0.1:{port}"), "roscid (dead bridge)");
+    wait_for_port(&format!("127.0.0.1:{port}"), "roscid (broken identity)");
 
     let (status, _) = http("GET", &format!("{base}/healthz"), None, None);
-    assert_eq!(status, 200, "liveness must not depend on the bridge");
+    assert_eq!(status, 200, "liveness must not depend on the identity");
     let (status, body) = http("GET", &format!("{base}/readyz"), None, None);
-    assert_eq!(status, 503, "dead bridge must read as not-ready: {body}");
+    assert_eq!(
+        status, 503,
+        "broken identity must read as not-ready: {body}"
+    );
     assert!(
         body.contains("not-ready"),
         "the error kind must say not-ready: {body}"

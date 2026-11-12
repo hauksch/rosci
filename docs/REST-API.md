@@ -2,7 +2,7 @@
 
 `roscid` exposes the same OSCI operations as the CLI over HTTP/JSON.
 This document is the normative description of that surface, the same
-way docs/PROTOCOL.md is normative for the bridge's stdio line protocol.
+(the protocol it documents is the REST surface itself).
 The OSCI wire itself (OSCI-Transport 1.2) is untouched — the server is
 a transport for the library, not a new dialect.
 
@@ -30,14 +30,13 @@ bridge.
 
 ### GET /readyz
 
-Requires auth. Pings the bridge (`ping` op, builds it if cold). 200
-`{"status":"ready"}` or 503 with the error envelope.
+Requires auth. 200 `{"status":"ready"}` when the warm client is built
+and its identity parses; 503 with the error envelope otherwise.
 
 ### GET /v1/version
 
-Requires auth. Returns the version handshake map (bridge, JVM, OSCI
-library, BouncyCastle, protocol version) — the same data `rosci version
---require-bridge` prints.
+Requires auth. Returns the version map (rosci, wire protocol, oscirs
+stack) — the same data `rosci version` prints.
 
 ### POST /v1/send
 
@@ -83,14 +82,12 @@ feedback — some retain no cards for every id.
 
 ### GET /v1/version
 
-Requires auth. Returns the version handshake map (bridge, JVM, OSCI
-library, BouncyCastle, protocol version).
+Requires auth. Returns the version map (rosci, wire protocol, oscirs
+stack) — the same data `rosci version` prints.
 
-## Bridge lifecycle
+## Client lifecycle
 
-roscid keeps **one** bridge JVM warm for the process lifetime and
+roscid keeps **one** native client warm for the process lifetime and
 serializes operations through it (the intermediary serializes them
-anyway). If the JVM dies, the supervisor rebuilds it on the next
-operation and retries once — failures that survive that surface as
-502/`bridge-death`. SIGTERM/SIGINT shut the bridge down politely; the
-JVM is never orphaned.
+anyway). A broken identity surfaces as `/readyz` 503 at startup; a
+dead intermediary surfaces as a transport error on the operation.

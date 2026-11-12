@@ -22,7 +22,8 @@ Normative set (xoev.de,
 
 Mirrored and machine-usable: the reference implementation
 [governikus/osci/osci-bib-java](https://gitlab.opencode.de/governikus/osci/osci-bib-java)
-(tag 2.6.1 = the artifact rosci wraps) carries the complete schema set
+(tag 2.6.1 — the oracle rosci's native stack is differentially tested
+against, and the source of the vendored schema set) carries the complete schema set
 in `osci-bibliothek-lib/osci-schema/src/main/resources/schema/` — every
 Auftrag as `*.xsd` plus `soap*.xsd` wrappers, `order.xsd` (content,
 SelectionRule, attachments), `oscisig.xsd`/`oscienc.xsd` (crypto), and
@@ -46,18 +47,25 @@ all ten.
 
 ## 3. How rosci is compared (the method)
 
-1. **Inherited wire conformance.** The bridge embeds
-   `de.osci:osci-bibliothek:2.6.1` — the standard's reference
-   implementation, pinned by hash in the build. Message construction,
-   crypto and dialog handling are conformant *by provenance*; rosci's
-   job is to expose them without getting in their way.
+1. **Differential wire conformance.** The native stack (oscirs) is
+   tested byte-level against the reference implementation's actual
+   output: the Java 2.6.1 compose oracle signs and serializes the same
+   logical messages and `compose_differential` compares the wire bytes
+   (full delivery, partial store delivery, transport-encrypted
+   variants); the golden-corpus fixtures — including a live-accepted
+   PartialStoreDelivery — pin the dialect; an XSD gate validates every
+   captured exchange against the normative schemas. Message
+   construction, crypto and dialog handling are conformant *by
+   differential evidence*, not provenance.
 2. **Behavioral conformance.** `make interop` (11 tests, live against
-   the reference intermediary product) proves the messages rosci
-   produces are accepted, responses verified, feedback classified.
-   The spec cannot be executed; the reference intermediary accepting
-   our traffic is the strongest practical check.
+   the reference intermediary product at gov.test.osci.de) proves the
+   messages rosci produces are accepted, responses verified, feedback
+   classified — including EFFI chunked transfer, proven
+   exchange-by-exchange against a live reference-client probe. The
+   spec cannot be executed; the reference intermediary accepting our
+   traffic is the strongest practical check.
 3. **Feature completeness** — the matrices below: every order type and
-   mechanism, who owns it (library / bridge / CLI), status, evidence.
+   mechanism, who owns it (oscirs stack / CLI), status, evidence.
 4. **Schema conformance — built.** The mock intermediary dumps
    decrypted OSCI messages; `container/xsd-validate.sh` validates them
    with `xmllint --schema` against the vendored `schema/` XSDs
@@ -72,17 +80,17 @@ all ten.
 
 | Auftrag (XSD) | Who owns it in rosci | Status | Evidence |
 |---|---|---|---|
-| InitDialog | library + bridge (one per operation) | full | e2e + interop |
-| GetMessageId | library + bridge (internal to send) | full | interop `send_secure…` |
-| StoreDelivery | bridge `send` + CLI | full (content + subject + repeatable `--attachment`; each part encrypted with its own key when encryption is on) | interop: send variants live; attachment round trip byte-exact |
-| FetchDelivery | bridge `fetch` + CLI | full for BY_MESSAGE_ID and ALL (spec rule 3); BY_DATE_OF_RECEPTION bridge-mapped but CLI-unexposed; BY_RECENT_MODIFICATION was a latent crash, fixed | interop: by-id round trip, `--all`, isolation |
-| FetchProcessCard | bridge `status` + CLI | partial (BY_MESSAGE_ID only; this manager retains no cards — 9804 live) | interop: structured rejection |
-| ExitDialog | bridge (implicit `exitDialogQuietly`) | partial by design — dialogs are one-shot (init → one Auftrag → exit); no exposed operation, no cross-request dialog reuse | e2e (dialog closed on error paths) |
+| InitDialog | stack (dialog open) | full | e2e + interop |
+| GetMessageId | stack (internal to send) | full | interop `send_secure…` |
+| StoreDelivery | stack `send` + CLI | full (content + subject + repeatable `--attachment`; each part encrypted with its own key when encryption is on) | interop: send variants live; attachment round trip byte-exact |
+| FetchDelivery | stack `fetch` + CLI | full for BY_MESSAGE_ID and ALL (spec rule 3); BY_DATE_OF_RECEPTION bridge-mapped but CLI-unexposed; BY_RECENT_MODIFICATION was a latent crash, fixed | interop: by-id round trip, `--all`, isolation |
+| FetchProcessCard | stack `status` + CLI | partial (BY_MESSAGE_ID only; this manager retains no cards — 9804 live) | interop: structured rejection |
+| ExitDialog | stack (implicit `exitDialogQuietly`) | partial by design — dialogs are one-shot (init → one Auftrag → exit); no exposed operation, no cross-request dialog reuse | e2e (dialog closed on error paths) |
 | ForwardDelivery | — | **none** — sender variant addressing a service provider by URL; N/A for the user-to-user scope rosci claims | — |
 | MediateDelivery | — | **none** — Abwicklungsauftrag (synchronous service-provider scenario) | — |
 | ProcessDelivery | — | **none** — supplier side of a service provider | — |
 | AcceptDelivery | — | **none** — supplier side (the mock plays intermediary/backend; rosci does not act as Dienstanbieter) | — |
-| PartialStore/FetchDelivery, ChunkInfo (EFFI) | bridge `send`/`fetch` + CLI `--chunk-size-kb` | **full** (opt-in): chunked store live-verified byte-exact (2 MB, 2 chunks) with manager-side reassembly; recipient fetches the reassembled message via plain FetchDelivery. The manager's own partial-fetch variant answered 9811 — the bridge's partial-fetch path stays for intermediaries that only serve chunks (untested live) | interop `chunked_send_round_trips…` |
+| PartialStore/FetchDelivery, ChunkInfo (EFFI) | stack send/fetch + CLI `--chunk-size-kb` | **full** (opt-in): chunked store live-verified byte-exact (2 MB, 2 chunks) with manager-side reassembly; recipient fetches the reassembled message via plain FetchDelivery. The manager's own partial-fetch variant answered 9811 — the bridge's partial-fetch path stays for intermediaries that only serve chunks (untested live) | interop `chunked_send_round_trips…` |
 
 Forward/Mediate/Process/Accept being absent is **conformant** (§7
 license) — but it means rosci cannot speak to service providers
@@ -116,7 +124,7 @@ a gap; revisit if a use case demands it.
 | Response signature verification (supplier) | full, automatic (`response_signed` surfaced) | live-verified |
 | Challenge/Response, ConversationId, SequenceNumber | full via library; dialogs one-shot | no cross-request dialog reuse |
 | MessageId / duplicate-submission protection | full via library (GetMessageId before every StoreDelivery) | |
-| TLS client authentication | full — `--tls-client-cert FILE` + `--tls-client-pin` (library builder + bridge were already there; the CLI now exposes them) | |
+| TLS client authentication | full — config-level trust anchors + client PKCS#12 (library builder + `HttpTransportTls`); CLI flag exposure pending | |
 | Timestamps / process cards | partial — see FetchProcessCard row; „Neuer Laufzettel" Ergänzung (2026) unsupported | |
 | XTA MessageMetaData (Ergänzung) | partial — `--metadata-author`/`--metadata-reader` identifiers + automatic MsgIdentification/MsgSize as a custom SOAP header; live-accepted by the OSCI-Manager. Fetch-side metadata retrieval and the fuller MMD structure (qualifiers, business scenario) not exposed | live send |
 | DVDV addressing | separate standard; rosci: local extract only (documented design decision) | |

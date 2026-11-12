@@ -39,8 +39,6 @@ pub struct ServerConfig {
     /// Test mode: plain SOAP transport (loopback intermediaries only —
     /// the same guard the CLI applies).
     pub insecure_transport: bool,
-    /// Bridge jar override; empty = library default resolution.
-    pub bridge_jar: Option<PathBuf>,
 }
 
 impl ServerConfig {
@@ -104,7 +102,6 @@ mod tests {
                 dvdv_file: "dvdv.json".into(),
                 response_timeout: Duration::from_secs(60),
                 insecure_transport: false,
-                bridge_jar: None,
             };
             assert!(cfg.validate().is_ok(), "{bind} must validate without a key");
         }
@@ -124,7 +121,6 @@ mod tests {
             dvdv_file: "dvdv.json".into(),
             response_timeout: Duration::from_secs(60),
             insecure_transport: false,
-            bridge_jar: None,
         };
         assert!(
             mk(None).validate().is_err(),

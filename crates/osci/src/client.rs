@@ -2,32 +2,28 @@
 
 use std::path::Path;
 
-use crate::bridge::{BridgeConfig, BridgeHandle};
 use crate::config::{Identity, Intermediary, Tls};
 use crate::dvdv::{DvdvDirectory, DvdvEntry};
 use crate::error::Error;
-use crate::protocol::{FetchedMessage, ProcessCard, Receipt, Request, VersionInfo};
+use crate::native::NativeClient;
+use crate::protocol::{FetchedMessage, ProcessCard, Receipt, VersionInfo};
 use crate::xta::Xta;
 
-/// A ready-to-use OSCI client backed by a live bridge process.
+/// A ready-to-use OSCI client, running the OSCI 1.2 stack natively
+/// (oscirs) — no sidecar process, nothing to babysit.
 ///
-/// Built via [`OsciClient::builder`]. Dropping the client shuts the bridge
-/// down politely (then impolitely, if the JVM insists).
+/// Built via [`OsciClient::builder`]. Operations are independent: each one
+/// runs its own OSCI dialog (open, work, close), so a failed send leaves
+/// nothing wedged behind.
+#[derive(Clone)]
 pub struct OsciClient {
-    bridge: BridgeHandle,
-    intermediary: Intermediary,
-    identity: Identity,
-    tls: Tls,
-    insecure_transport: bool,
+    native: NativeClient,
 }
 
 impl std::fmt::Debug for OsciClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The bridge handle owns OS resources and a live thread — we print
-        // the identity-free facts and call it a day.
         f.debug_struct("OsciClient")
-            .field("intermediary_url", &self.intermediary.url)
-            .field("tls_configured", &self.tls.client_p12_b64.is_some())
+            .field("native", &self.native)
             .finish_non_exhaustive()
     }
 }
@@ -47,13 +43,10 @@ impl OsciClient {
         OsciClientBuilder::default()
     }
 
-    /// Version handshake: bridge, JVM, OSCI library, BouncyCastle.
-    pub fn versions(&mut self) -> Result<VersionInfo, Error> {
-        let rsp = self.bridge.call(base_request("ping"))?;
-        let versions = rsp.result.and_then(|r| r.versions).ok_or_else(|| {
-            Error::BridgeProtocol("bridge ping response carried no versions".into())
-        })?;
-        Ok(versions)
+    /// Version handshake: library, stack, provider. Local — no dialog is
+    /// opened for this.
+    pub fn versions(&self) -> Result<VersionInfo, Error> {
+        Ok(self.native.versions())
     }
 
     /// Starts a send flow for an XTA payload.
@@ -89,63 +82,32 @@ impl OsciClient {
     }
 
     /// Fetch with EFFI partial fetch (KB per chunk) — for messages that
-    /// were stored chunked. A smaller-than-chunk message arrives as a
-    /// plain response.
+    /// were stored chunked. A message smaller than one chunk arrives as a
+    /// plain fetch response on round one.
     pub fn fetch_with(
         &mut self,
         query: FetchQuery,
         chunk_size_kb: Option<u64>,
     ) -> Result<Vec<FetchedMessage>, Error> {
-        let (mode, rule) = match &query {
-            FetchQuery::ByMessageId(id) => ("BY_MESSAGE_ID", Some(id.clone())),
-            FetchQuery::All => ("ALL", None),
+        let rule = match &query {
+            FetchQuery::ByMessageId(id) => Some(id.clone()),
+            FetchQuery::All => None,
         };
-        let mut req = self.dialog_request("fetch");
-        req.chunk_size_kb = chunk_size_kb;
-        req.selection_mode = Some(mode.to_string());
-        req.selection_rule = rule;
-        let rsp = self.bridge.call(req)?;
-        let messages = rsp.result.and_then(|r| r.messages).ok_or_else(|| {
-            Error::BridgeProtocol("bridge fetch response carried no messages".into())
-        })?;
-        Ok(messages)
+        self.native.fetch(rule.as_deref(), chunk_size_kb)
     }
 
     /// Fetches the Laufzettel (process card) for a message we sent.
     pub fn process_card(&mut self, message_id: &str) -> Result<Vec<ProcessCard>, Error> {
-        let mut req = self.dialog_request("process-card");
-        req.selection_mode = Some("BY_MESSAGE_ID".to_string());
-        req.selection_rule = Some(message_id.to_string());
-        let rsp = self.bridge.call(req)?;
-        let cards = rsp.result.and_then(|r| r.process_cards).ok_or_else(|| {
-            Error::BridgeProtocol("bridge process-card response carried no process cards".into())
-        })?;
-        Ok(cards)
+        self.native.process_card(message_id)
     }
 
-    /// End-of-life convenience: shuts the bridge down and swallows the
-    /// error — at this point the work either succeeded or the real error
-    /// was already reported. The one shutdown dance, in one place.
-    pub fn finish(&mut self) {
-        self.shutdown().ok();
-    }
+    /// End-of-life convenience: with no child process to stop, this is a
+    /// no-op kept for API compatibility.
+    pub fn finish(&mut self) {}
 
-    /// Tells the bridge to exit and waits for it.
+    /// Nothing to shut down natively; always succeeds.
     pub fn shutdown(&mut self) -> Result<(), Error> {
-        // Bounded politeness-then-hammer, mirroring Drop: an explicit
-        // shutdown must never hang where a drop would not.
-        self.bridge.shutdown_and_wait().map(|_| ())
-    }
-
-    fn dialog_request(&self, op: &'static str) -> Request {
-        let mut req = base_request(op);
-        req.intermediary = Some(self.intermediary.to_msg());
-        req.identity = Some(self.identity.to_msg());
-        req.tls = Some(self.tls.to_msg());
-        if self.insecure_transport {
-            req.insecure_transport = Some(false);
-        }
-        req
+        Ok(())
     }
 }
 
@@ -154,9 +116,9 @@ impl OsciClient {
 /// just an expensive way to shout into the void.
 #[derive(Debug, Clone)]
 pub struct OsciClientBuilder {
-    bridge: BridgeConfig,
     intermediary: Option<Intermediary>,
     identity: Option<Identity>,
+    timeout: std::time::Duration,
     tls: Tls,
     insecure_transport: bool,
 }
@@ -164,9 +126,9 @@ pub struct OsciClientBuilder {
 impl Default for OsciClientBuilder {
     fn default() -> Self {
         Self {
-            bridge: BridgeConfig::java_jar(default_jar_path()),
             intermediary: None,
             identity: None,
+            timeout: std::time::Duration::from_secs(120),
             tls: Tls::default(),
             insecure_transport: false,
         }
@@ -174,13 +136,6 @@ impl Default for OsciClientBuilder {
 }
 
 impl OsciClientBuilder {
-    /// Launch command override (default `java -jar <jar>`), tests plug
-    /// fakes in here.
-    pub fn bridge_config(mut self, cfg: BridgeConfig) -> Self {
-        self.bridge = cfg;
-        self
-    }
-
     pub fn intermediary(mut self, intermediary: Intermediary) -> Self {
         self.intermediary = Some(intermediary);
         self
@@ -229,12 +184,12 @@ impl OsciClientBuilder {
         Ok(self)
     }
 
-    /// Bounds how long a single bridge operation may take before the call
-    /// fails with a timeout. Services should set this explicitly: a wedged
-    /// JVM must surface as HTTP 504, not as a connection held open for the
-    /// default five minutes.
+    /// Bounds how long a single operation may take (the HTTP transport's
+    /// global timeout) before the call fails. Services should set this
+    /// explicitly: a wedged intermediary must surface as HTTP 504, not as
+    /// a connection held open for the default two minutes.
     pub fn response_timeout(mut self, timeout: std::time::Duration) -> Self {
-        self.bridge = self.bridge.response_timeout(timeout);
+        self.timeout = timeout;
         self
     }
 
@@ -252,8 +207,8 @@ impl OsciClientBuilder {
         self
     }
 
-    /// Spawns the bridge and performs the `ping` handshake. Fails loudly
-    /// and early, the way incidents reports wish they could.
+    /// Validates the configuration and parses the keystores — fails loudly
+    /// and early, the way incident reports wish they could.
     pub fn build(self) -> Result<OsciClient, Error> {
         let intermediary = self
             .intermediary
@@ -265,34 +220,47 @@ impl OsciClientBuilder {
             .identity
             .ok_or_else(|| Error::Config("identity (signer PKCS#12) is required".to_string()))?;
 
-        let mut bridge = BridgeHandle::spawn(&self.bridge)?;
-        let rsp = bridge.call(base_request("ping"))?;
-        let versions = rsp.result.and_then(|r| r.versions).ok_or_else(|| {
-            Error::BridgeProtocol("bridge ping response carried no versions".into())
-        })?;
-        match versions.get("protocol").map(String::as_str) {
-            Some(v) if v == crate::protocol::PROTOCOL_VERSION => {}
-            Some(v) => {
-                return Err(Error::BridgeProtocol(format!(
-                    "bridge speaks protocol {v}, this library speaks {} — \
-                     the wire format is versioned, mixing versions is not supported",
-                    crate::protocol::PROTOCOL_VERSION
-                )))
-            }
-            None => {
-                return Err(Error::BridgeProtocol(
-                    "bridge ping response carries no protocol version".into(),
-                ))
-            }
+        // TLS: trust anchors REPLACE the default roots (self-managed
+        // intermediary CAs); the client bundle becomes the mutual-TLS
+        // identity. Parsed here, loudly, exactly like the identity.
+        let mut tls_roots = Vec::new();
+        for anchor in &self.tls.trust_anchors {
+            let der = crate::native::certificate_der(anchor)
+                .ok_or_else(|| Error::Config("unparseable TLS trust anchor".to_string()))?;
+            tls_roots.push(der);
+        }
+        let mut tls_client_chain = Vec::new();
+        let mut tls_client_key_pem = String::new();
+        if let Some(p12_b64) = &self.tls.client_p12_b64 {
+            let pin = self.tls.client_pin.as_ref().ok_or_else(|| {
+                Error::Config("tls.client_pin is required with client_p12_b64".into())
+            })?;
+            let der =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, p12_b64.trim())
+                    .map_err(|e| Error::Config(format!("tls.client_p12_b64 is not base64: {e}")))?;
+            let keypair = crate::p12::P12Keypair::parse(&der, pin.as_str())?;
+            tls_client_chain = keypair.chain().iter().map(|c| c.der().to_vec()).collect();
+            use rsa::pkcs8::EncodePrivateKey;
+            let key_der = keypair
+                .key()
+                .to_pkcs8_der()
+                .map_err(|e| Error::Config(format!("tls client key not PKCS#8-encodable: {e}")))?;
+            tls_client_key_pem = pem_wrap("PRIVATE KEY", key_der.as_bytes());
         }
 
-        Ok(OsciClient {
-            bridge,
-            intermediary,
-            identity,
-            tls: self.tls,
-            insecure_transport: self.insecure_transport,
-        })
+        let native = NativeClient::new(
+            intermediary.clone(),
+            &identity,
+            self.timeout,
+            self.insecure_transport,
+            osci_transport::http::HttpTransportTls {
+                root_certs: tls_roots,
+                client_chain: tls_client_chain,
+                client_key_pem: tls_client_key_pem,
+            },
+        )?;
+
+        Ok(OsciClient { native })
     }
 }
 
@@ -363,8 +331,8 @@ impl SendBuilder<'_> {
     }
 
     /// Sends via EFFI chunked transfer with this many KB per chunk
-    /// (spec „Effiziente Übertragung großer Datenmengen"). Opt-in: the
-    /// fully built StoreDelivery is serialized, split and shipped as a
+    /// (spec „Effiziente Übertragung großer Datenmengen"). The fully
+    /// composed+signed delivery is split and shipped as a
     /// PartialStoreDelivery sequence.
     pub fn chunk_size_kb(mut self, kb: u64) -> Self {
         self.chunk_size_kb = Some(kb);
@@ -404,39 +372,21 @@ impl SendBuilder<'_> {
     }
 
     /// Sends the message and returns the intermediary's receipt.
-    pub fn submit(mut self) -> Result<Receipt, Error> {
-        let recipient = self.recipient.take().ok_or_else(|| {
+    pub fn submit(self) -> Result<Receipt, Error> {
+        let recipient = self.recipient.ok_or_else(|| {
             Error::Config("recipient (cipher certificate or DVDV entry) is required".into())
         })?;
 
-        let mut req = self.client.dialog_request("send");
-        req.recipient = Some(crate::protocol::Party {
-            url: None,
-            cipher_cert: Some(recipient.cipher_cert.clone()),
-            signature_cert: recipient.signature_cert.clone(),
-        });
-        req.subject = self.subject.clone();
-        req.content = Some(self.xta.to_payload());
-        req.attachments = if self.attachments.is_empty() {
-            None
-        } else {
-            Some(self.attachments.iter().map(|a| a.to_payload()).collect())
-        };
-        req.chunk_size_kb = self.chunk_size_kb;
-        req.metadata_author = self.metadata_author.clone();
-        req.metadata_reader = self.metadata_reader.clone();
-        req.sign = Some(self.sign);
-        req.encrypt = Some(self.encrypt);
-
-        let rsp = self.client.bridge.call(req)?;
-        let result = rsp.result.unwrap_or_default();
-        let message_id = result.message_id.ok_or_else(|| {
-            Error::BridgeProtocol("send succeeded but carried no message id".into())
-        })?;
-        Ok(Receipt {
-            message_id,
-            response_signed: result.response_signed,
-            feedback: result.feedback,
+        self.client.native.send_xta(crate::native::SendRequest {
+            xta: &self.xta,
+            attachments: &self.attachments,
+            chunk_size_kb: self.chunk_size_kb,
+            recipient_cipher_cert: &recipient.cipher_cert,
+            subject: self.subject.as_deref(),
+            metadata_author: self.metadata_author.as_deref(),
+            metadata_reader: self.metadata_reader.as_deref(),
+            sign: self.sign,
+            encrypt: self.encrypt,
         })
     }
 }
@@ -467,28 +417,6 @@ pub fn resolve_dvdv<D: DvdvDirectory + ?Sized>(
     Ok((intermediary, Recipient::from_dvdv_entry(&entry)))
 }
 
-fn base_request(op: &'static str) -> Request {
-    Request {
-        id: String::new(),
-        op,
-        intermediary: None,
-        identity: None,
-        recipient: None,
-        subject: None,
-        content: None,
-        attachments: None,
-        chunk_size_kb: None,
-        metadata_author: None,
-        metadata_reader: None,
-        sign: None,
-        encrypt: None,
-        insecure_transport: None,
-        tls: None,
-        selection_mode: None,
-        selection_rule: None,
-    }
-}
-
 /// Whether an intermediary URL points at the local machine — the same
 /// machine this process runs on. Used to enforce fail-closed guards for
 /// operations that are only safe against loopback peers (plain-transport
@@ -503,7 +431,7 @@ pub fn url_host_is_loopback(url: &str) -> bool {
     let mut host_port = after_scheme.split(['/']).next().unwrap_or(after_scheme);
     // Userinfo (RFC 3986) precedes the host and may itself contain ':' and
     // dots — strip it before host parsing, or "127.0.0.1:8080@evil.example"
-    // passes as loopback while the bridge connects to evil.example.
+    // passes as loopback while the transport connects to evil.example.
     if let Some((_, rest)) = host_port.rsplit_once('@') {
         host_port = rest;
     }
@@ -529,64 +457,24 @@ pub fn url_host_is_loopback(url: &str) -> bool {
             .all(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// Where the jar lives by default: `OSCI_BRIDGE_JAR` wins, then the
-/// release layout next to the running binary (`../lib/osci-bridge.jar`,
-/// see `make release`), then a cwd-relative `osci-bridge.jar`.
-pub fn default_jar_path() -> std::path::PathBuf {
-    let env = std::env::var_os("OSCI_BRIDGE_JAR");
-    let exe = std::env::current_exe().ok();
-    resolve_jar_path(env.as_deref(), exe.as_deref())
+/// DER bytes as a single-line-label PEM document (the wire format the
+/// TLS stack expects for client keys and anchors).
+fn pem_wrap(label: &str, der: &[u8]) -> String {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+    let mut out = format!("-----BEGIN {label}-----\n");
+    for chunk in b64.as_bytes().chunks(64) {
+        out.push_str(std::str::from_utf8(chunk).unwrap_or_default());
+        out.push('\n');
+    }
+    out.push_str(&format!("-----END {label}-----\n"));
+    out
 }
 
-/// Pure core of [`default_jar_path`]: env override wins, then the
-/// exe-relative release layout, then a cwd-relative fallback.
-fn resolve_jar_path(
-    env: Option<&std::ffi::OsStr>,
-    exe: Option<&std::path::Path>,
-) -> std::path::PathBuf {
-    if let Some(env) = env {
-        return std::path::PathBuf::from(env);
-    }
-    let release = exe
-        .and_then(|e| e.parent())
-        .map(|dir| dir.join("../lib/osci-bridge.jar"))
-        .filter(|p| p.is_file());
-    if let Some(jar) = release {
-        return jar;
-    }
-    std::path::PathBuf::from("osci-bridge.jar")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve_jar_path;
-    use std::path::Path;
-
-    #[test]
-    fn env_override_wins_over_everything() {
-        let p = resolve_jar_path(
-            Some("/custom/bridge.jar".as_ref()),
-            Some(Path::new("/opt/dist/bin/rosci")),
-        );
-        assert_eq!(p, Path::new("/custom/bridge.jar"));
-    }
-
-    #[test]
-    fn release_layout_is_found_next_to_the_binary() {
-        // dist/bin/rosci -> dist/lib/osci-bridge.jar
-        let dist = tempfile::tempdir().unwrap();
-        let bin = dist.path().join("bin");
-        std::fs::create_dir_all(bin.join("../lib")).unwrap();
-        std::fs::write(bin.join("../lib/osci-bridge.jar"), b"jar").unwrap();
-        let p = resolve_jar_path(None, Some(&bin.join("rosci")));
-        assert_eq!(p, bin.join("../lib/osci-bridge.jar"));
-    }
-
-    #[test]
-    fn falls_back_to_cwd_relative_when_layout_is_absent() {
-        let p = resolve_jar_path(None, Some(Path::new("/nowhere/bin/rosci")));
-        assert_eq!(p, Path::new("osci-bridge.jar"));
-    }
+/// The oscirs stack version this build embeds (crate version + git rev),
+/// for `rosci version` and diagnostics.
+pub fn library_version() -> String {
+    format!("oscirs {} (native)", osci_rs::VERSION)
 }
 
 #[cfg(test)]
@@ -603,7 +491,7 @@ mod loopback_tests {
             "http://[::1]:9000/entry",
             "http://[::1]/",
             // Userinfo in front of a genuinely loopback host: the userinfo
-            // is decoration, the host is what the bridge connects to.
+            // is decoration, the host is what the transport connects to.
             "http://user:geheim@127.0.0.1:8080/x",
             "http://dienstlich@[::1]:9000/entry",
         ] {
@@ -619,9 +507,8 @@ mod loopback_tests {
             "http://10.0.0.1:1/",             // private, but not loopback
             "http://192.168.1.10/entry",      // same
             "http://127.0.0.1.evil.example/", // loopback as a subdomain — nice try
-            // Loopback as *userinfo*: the Rust guard used to read the
-            // userinfo as the host while the Java bridge connected to
-            // evil.example. The guard must read the same host Java does.
+            // Loopback as *userinfo*: the guard must read the same host the
+            // transport connects to.
             "http://127.0.0.1:8080@evil.example/entry",
             "http://[::1]@evil.example/entry",
             "http://user:geheim@10.1.2.3/x",

@@ -22,7 +22,17 @@ gen client-sign
 gen client-cipher
 gen recipient-cipher
 gen intermed-sign
-gen intermed-cipher
+# the intermediary identity doubles as the TLS server certificate for the
+# mock's HTTPS mode: SAN for 127.0.0.1 so rustls name-checks pass, and
+# CA:FALSE so it is a legal end-entity certificate (the client trusts it
+# directly via --tls-ca, anchor == leaf)
+openssl req -x509 -newkey rsa:2048 -keyout intermed-cipher.key -out intermed-cipher.pem \
+    -days 2 -nodes -subj "/CN=intermed-cipher/O=rosci-test/C=DE" \
+    -addext "keyUsage = digitalSignature, keyEncipherment, dataEncipherment" \
+    -addext "basicConstraints = CA:FALSE" \
+    -addext "subjectAltName = DNS:localhost, IP:127.0.0.1"
+
+
 
 openssl pkcs12 -export -inkey client-sign.key -in client-sign.pem \
   -passout "pass:$PIN" -out client-sign.p12

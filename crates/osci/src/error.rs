@@ -153,9 +153,4 @@ impl Error {
     }
 }
 
-impl Error {
-    /// Constructor used by the bridge handle on timeouts.
-    pub(crate) fn bridge_timeout(ms: u64) -> Self {
-        Error::BridgeTimeout { timeout_ms: ms }
-    }
-}
+impl Error {}

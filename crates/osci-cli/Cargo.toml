@@ -10,7 +10,7 @@ name = "rosci"
 path = "src/main.rs"
 
 [dependencies]
-osci = { path = "../osci" }
+rosci = { path = "../osci" }
 base64 = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 zeroize = { workspace = true }
@@ -19,8 +19,13 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
+testsupport = { path = "../testsupport" }
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
 proptest = { workspace = true }
 sha2 = "0.11"
+# The CLI tests drive a scripted oscirs intermediary in-process.
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "3347252d79683812ef5345660ff1eedba47faad7" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "3347252d79683812ef5345660ff1eedba47faad7" }
+chrono = "0.4"

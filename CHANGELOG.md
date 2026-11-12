@@ -7,6 +7,59 @@ written as the work happened and are kept as history.
 
 ## [Unreleased]
 
+### Changed — the Java bridge is gone (0.5.0 cutover)
+- **The OSCI stack is fully native.** oscirs (github.com/hauksch/oscirs)
+  replaces the KOSIT/governikus Java library and the `osci-bridge.jar`
+  sidecar wholesale: dialogs, all message kinds, signing, encryption,
+  EFFI chunking, TLS. `java/`, the Maven build, the dependency manifest
+  and the OSV Java gate are deleted; `make check` is Rust-only. The
+  builder image drops JDK+Maven (rosci-builder:2, ubuntu 22.04 base,
+  digest-pinned; LOCK.md re-recorded). Workspace version 0.4.0 → 0.5.0
+  (breaking: no jar, no Java requirement).
+
+### Fixed
+- **Live 9400 on every dialog continuation (implicit vs explicit
+  dialogs):** the reference client resets the control block per request
+  in implicit dialogs (no InitDialog went through it) — rosci carried
+  adopted ConversationId/Response/Sequence state into store deliveries
+  and the intermediary rejected the followup with 9400. oscirs now
+  ports `resetControlBlock` semantics per request plus the post-Init
+  sequence sentinel (live-proven 10/10, then 11/11).
+- **EFFI chunked send was rejected with 9300 ("Auftragsdaten
+  ungültig")**: the chunk slices carry bytes of the full delivery
+  *including its MIME boundary* — when the wrapping partial reused the
+  same boundary, the intermediary's MIME parser split the partial at
+  the embedded boundary and read the full delivery's parts as order
+  data. Each partial now gets a fresh alphanumeric boundary; the chunk
+  dialect (single-encoded `_Partial` MessageId, fixed carrier ids,
+  KB totals, FeatureDescription on Init/GetId + partials, plain Init +
+  enveloped rest) was verified exchange-by-exchange against
+  gov.test.osci.de using a live reference-client probe. **Interop:
+  11/11**, incl. the chunked send → fetch → byte-exact round trip.
+- **Legacy-GCM transport envelopes could not be decrypted** (peers
+  without the Korrigenda-7 `IvLength` hint use a 128-bit IV): the
+  decrypt paths now honor a written hint and try legacy-16/known-12
+  otherwise — the GCM tag arbitrates. Required for responses after a
+  plain InitDialog.
+- **TLS trust anchors and mutual-TLS client certificates** parse at
+  builder time and ride through oscirs's `HttpTransportTls` (PEM key
+  framing auto-detected; broken keys fail construction, not the first
+  request).
+- **PartialFetchDelivery rounds schema-correct**: no TotalChunkNumbers
+  on requests (response-side field; the schema forbids it — live
+  9300), signature-cert-only NIC. First partial-fetch round proven
+  live (~1.5 MB); multi-round fetch stays unproven against the
+  demulator (9901/9811) and remains mock-covered.
+- **e2e/REST suites run against an in-process mock intermediary**
+  (crates/testsupport): dialog chain, canned fetch (plain + encrypted),
+  Laufzettel echo, RSA-PSS-signed responses with the signing cert in
+  an IntermediaryCertificates header, transport-envelope
+  decrypt/encrypt, and the jar mock's wire-dump contract — no jars, no
+  java, no skip-guards on missing artifacts.
+- **`rosci version` reports the real oscirs build** (crate version +
+  git rev, embedded at oscirs build time) instead of a stale
+  hand-pinned string.
+
 ### Fixed
 - **roscid `/readyz` answered 200 when the bridge was down** — the
   failure was wrapped in an `Ok` and sent as `200 {"status":"not-ready"}`,

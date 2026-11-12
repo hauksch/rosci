@@ -5,6 +5,20 @@
 [advisories]
 version = 2
 yanked = "deny"
+# RUSTSEC-2023-0071 (Marvin Attack on the RustCrypto `rsa` crate): no patched
+# release exists. This replaces the BouncyCastle v1.5-unwrap exposure the Java
+# bridge carried — same vulnerability class, same transport-only surface
+# (RSAES-PKCS1-v1_5 key unwrap of partner-chosen ciphertexts). Revisit when
+# RustCrypto/RSA#626 lands; see SECURITY.md.
+ignore = [
+    "RUSTSEC-2023-0071",
+    # RUSTSEC-2026-0387 (crypto-bigint timing variability): the fix is a
+    # semver bump to 0.7.x that elliptic-curve 0.13 (p256 ECDSA in the
+    # oscirs crypto stack) cannot take yet — upstream-blocked. Exposure is
+    # on the ECDSA *verify* path only (partner signatures); our private-key
+    # operations are RSA. Revisit when oscirs moves to p256 0.14.
+    "RUSTSEC-2026-0387",
+]
 
 [licenses]
 version = 2
@@ -15,12 +29,20 @@ version = 2
 allow = [
   "MIT",
   "Apache-2.0",
+  "BSD-3-Clause",
+  "ISC",
+  # webpki-roots: Mozilla root-store data (not code), permissive data license.
+  "CDLA-Permissive-2.0",
   "Unicode-3.0",
 ]
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-git = [
+  # The OSCI-Rust-Rewrite stack, pinned by rev in crates/osci/Cargo.toml.
+  "https://github.com/hauksch/oscirs",
+]
 
 [bans]
 multiple-versions = "warn"
