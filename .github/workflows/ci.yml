@@ -1,51 +1,38 @@
 name: ci
 
-permissions:
-  contents: read
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
-
-      # The build caches everything inside the workspace (ground rule 1) —
-      # cache those directories so CI does not re-download the Maven tree
-      # and crates on every run.
-      - name: Restore build caches
-        uses: actions/cache@v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable
         with:
-          path: |
-            .cargo-home
-            .cache
-          key: >-
-            ${{ runner.os }}-osci-${{ hashFiles('container/Dockerfile.builder',
-            'Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-osci-
-
-      # Container parity: CI runs the same pinned builder image and the
-      # same gates as `make check` locally. The live interop suite cannot
-      # fire here — it is gated behind ROSCI_INTEROP=1, which CI never sets
-      # (docs/TEST-INFRASTRUCTURE.md).
-      - name: Lint
-        run: make OCI=docker lint
-
-      - name: Test
-        run: make OCI=docker test
-
-      - name: Audit (cargo-deny)
-        run: make OCI=docker audit
-
-      - name: Verify dependency manifest
-        run: make OCI=docker verify-deps
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # xmllint validates captured OSCI wire traffic against the normative
+      # schemas (docs/STANDARD-COMPLIANCE.md §3.4); openssl signs the
+      # per-run throwaway test PKI
+      - name: Install xmllint
+        run: sudo apt-get update && sudo apt-get install -y libxml2-utils
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - name: cargo deny (licenses, advisories, sources)
+        uses: taiki-e/install-action@5d74846a2a474d70ac366d25bf5dc1b6f882799e
+        with:
+          tool: cargo-deny
+      - run: cargo deny --config deny.toml check --hide-inclusion-graph licenses advisories sources
+      - run: bash -c 'cd fuzz && cargo deny --config ../deny.toml check --hide-inclusion-graph advisories sources'

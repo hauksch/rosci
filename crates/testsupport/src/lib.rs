@@ -17,19 +17,19 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use osci_core::helper::base64;
+use osci_core::message::MessageType;
 use osci_core::message::compose::{
-    compose_message, signature_header_name, OutAttachment, OutContent, OutContentContainer,
-    OutFeedback, OutMessage, OutProcessCard, OutProcessCardBundle,
+    OutAttachment, OutContent, OutContentContainer, OutFeedback, OutMessage, OutProcessCard,
+    OutProcessCardBundle, compose_message, signature_header_name,
 };
 use osci_core::message::stored::StoredMessage;
-use osci_core::message::MessageType;
-use osci_core::soap::{find_header, ControlBlock};
+use osci_core::soap::{ControlBlock, find_header};
 use osci_rs::security::{
-    decrypt_transport_message, encrypt_container, EncRecipient, EncryptConfig, StoredMessageLike,
+    EncRecipient, EncryptConfig, StoredMessageLike, decrypt_transport_message, encrypt_container,
 };
 use osci_rs::{Certificate, RsaSigner, Signer};
 
@@ -255,10 +255,10 @@ impl MockIntermediary {
                         break;
                     }
                     request.extend_from_slice(&buf[..n]);
-                    if let Some(len) = content_length(&request) {
-                        if request.len() >= len {
-                            break;
-                        }
+                    if let Some(len) = content_length(&request)
+                        && request.len() >= len
+                    {
+                        break;
                     }
                 }
                 let body = body_of(&request).to_vec();
@@ -581,21 +581,15 @@ fn handle(
         osci_core::xml::parser::parse(&signed)
             .map(|d| {
                 let mut uri = String::new();
-                if let Some(h) = osci_core::soap::find_header(&d) {
-                    if let Some(sig) = h
+                if let Some(h) = osci_core::soap::find_header(&d)
+                    && let Some(sig) = h
                         .elements()
                         .find(|e| e.local == "SupplierSignature" || e.local == "ClientSignature")
-                    {
-                        if let Some(s) = sig.elements().find(|e| e.local == "Signature") {
-                            if let Some(ki) = s.elements().find(|e| e.local == "KeyInfo") {
-                                if let Some(rm) =
-                                    ki.elements().find(|e| e.local == "RetrievalMethod")
-                                {
-                                    uri = rm.attr("URI").unwrap_or_default().to_string();
-                                }
-                            }
-                        }
-                    }
+                    && let Some(s) = sig.elements().find(|e| e.local == "Signature")
+                    && let Some(ki) = s.elements().find(|e| e.local == "KeyInfo")
+                    && let Some(rm) = ki.elements().find(|e| e.local == "RetrievalMethod")
+                {
+                    uri = rm.attr("URI").unwrap_or_default().to_string();
                 }
                 uri
             })
@@ -619,23 +613,21 @@ fn handle(
     }
     // full-crypto exchanges get enveloped responses: the manager mirrors
     // the transport crypto the client demonstrated with its request
-    if transport_encrypted {
-        if let Some(cert) = client_cert {
-            let enveloped = osci_rs::security::encrypt_message_for(
-                &plain_response,
-                cert,
-                &EncryptConfig::default(),
-                "MIME_boundary_response",
-            )
-            .expect("mock encrypts the response envelope");
-            if let Some(dump) = dump {
-                let _ = std::fs::write(
-                    dump.dir.join(format!("response-{}.xml", dump.n)),
-                    &enveloped,
-                );
-            }
-            return enveloped;
+    if transport_encrypted && let Some(cert) = client_cert {
+        let enveloped = osci_rs::security::encrypt_message_for(
+            &plain_response,
+            cert,
+            &EncryptConfig::default(),
+            "MIME_boundary_response",
+        )
+        .expect("mock encrypts the response envelope");
+        if let Some(dump) = dump {
+            let _ = std::fs::write(
+                dump.dir.join(format!("response-{}.xml", dump.n)),
+                &enveloped,
+            );
         }
+        return enveloped;
     }
     if let Some(dump) = dump {
         let _ = std::fs::write(

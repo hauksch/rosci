@@ -27,7 +27,7 @@ use osci_transport::{Transport, TransportError};
 use osci_rs as oci;
 
 use oci::dialog::Dialog;
-use oci::security::{decrypt_encrypted_data, verify_message, EncRecipient, EncryptConfig};
+use oci::security::{EncRecipient, EncryptConfig, decrypt_encrypted_data, verify_message};
 use oci::{Certificate, CryptoError};
 
 use crate::config::{Identity, Intermediary};
@@ -995,7 +995,7 @@ impl NativeClient {
                 other => {
                     return Err(Error::BridgeProtocol(format!(
                         "chunked fetch: unexpected response kind {other:?}"
-                    )))
+                    )));
                 }
             }
 
@@ -1025,10 +1025,10 @@ impl NativeClient {
                 })?;
             blobs.push((this_chunk, blob));
 
-            if let Some(t) = total {
-                if received.len() as i64 >= t {
-                    break;
-                }
+            if let Some(t) = total
+                && received.len() as i64 >= t
+            {
+                break;
             }
         }
 

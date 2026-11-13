@@ -304,9 +304,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.20.3"
+version = "3.20.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
+checksum = "87a0cf66fd1eb2fb7b822cb78370d82303750809bc6ba855f3f58e517d3238db"
 
 [[package]]
 name = "bytes"
@@ -334,9 +334,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.11.1"
+version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ff2a8126fff0f8c839080d619675a585e61720bb12d2baceae45769fd66f155"
+checksum = "33ef9e3e8154a45c7a95cff4c1299702106ad94062d7bb85fdc5d3a5afd91d45"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -747,9 +747,9 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "errno"
-version = "0.3.14"
+version = "0.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1239,7 +1239,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 [[package]]
 name = "osci"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=3347252d79683812ef5345660ff1eedba47faad7#3347252d79683812ef5345660ff1eedba47faad7"
+source = "git+https://github.com/hauksch/oscirs?rev=ea32ae3eb343f3fc87595604bfa0fe90f1eefa35#ea32ae3eb343f3fc87595604bfa0fe90f1eefa35"
 dependencies = [
  "base64",
  "osci-core",
@@ -1274,7 +1274,7 @@ dependencies = [
 [[package]]
 name = "osci-core"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=3347252d79683812ef5345660ff1eedba47faad7#3347252d79683812ef5345660ff1eedba47faad7"
+source = "git+https://github.com/hauksch/oscirs?rev=ea32ae3eb343f3fc87595604bfa0fe90f1eefa35#ea32ae3eb343f3fc87595604bfa0fe90f1eefa35"
 dependencies = [
  "chrono",
  "osci-crypto",
@@ -1286,7 +1286,7 @@ dependencies = [
 [[package]]
 name = "osci-crypto"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=3347252d79683812ef5345660ff1eedba47faad7#3347252d79683812ef5345660ff1eedba47faad7"
+source = "git+https://github.com/hauksch/oscirs?rev=ea32ae3eb343f3fc87595604bfa0fe90f1eefa35#ea32ae3eb343f3fc87595604bfa0fe90f1eefa35"
 dependencies = [
  "aes 0.8.4",
  "base64",
@@ -1309,7 +1309,7 @@ dependencies = [
 [[package]]
 name = "osci-transport"
 version = "0.1.0"
-source = "git+https://github.com/hauksch/oscirs?rev=3347252d79683812ef5345660ff1eedba47faad7#3347252d79683812ef5345660ff1eedba47faad7"
+source = "git+https://github.com/hauksch/oscirs?rev=ea32ae3eb343f3fc87595604bfa0fe90f1eefa35#ea32ae3eb343f3fc87595604bfa0fe90f1eefa35"
 dependencies = [
  "thiserror",
  "ureq",
@@ -1844,9 +1844,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.16"
+version = "0.103.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
+checksum = "e3a0760a887c14823fca5a1c970b01d47c328c696c0c64829d1df50e8f853fd5"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -2377,9 +2377,9 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "ureq"
-version = "3.5.1"
+version = "3.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7be76686bdf7198002062423ca0d8cf9b75a27c8e1de804513b97e97b555d9d"
+checksum = "3ac5cecf619ca81f66a96482db09687c9f7465af65f4300a8c30cca05bd5a59d"
 dependencies = [
  "base64",
  "flate2",
@@ -2489,9 +2489,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.11"
+version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
+checksum = "7265c9301c16a8711c992c2d8da90ee77ef54b1ed51482d6dfeb00dc756b1297"
 dependencies = [
  "rustls-pki-types",
 ]

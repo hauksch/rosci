@@ -12,8 +12,8 @@ publish = false
 # The library under test (its p12 helpers for the intermediary identity).
 rosci = { path = "../osci" }
 # The oscirs stack for composing mock responses.
-osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "3347252d79683812ef5345660ff1eedba47faad7" }
-osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "3347252d79683812ef5345660ff1eedba47faad7" }
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
 base64 = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

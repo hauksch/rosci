@@ -51,15 +51,15 @@ pub mod protocol;
 mod xta;
 
 pub use client::{
-    library_version, resolve_dvdv, url_host_is_loopback, FetchQuery, OsciClient, Recipient,
-    SendBuilder,
+    FetchQuery, OsciClient, Recipient, SendBuilder, library_version, resolve_dvdv,
+    url_host_is_loopback,
 };
-pub use config::{read_certificate_file, Identity, Intermediary, Tls};
+pub use config::{Identity, Intermediary, Tls, read_certificate_file};
 pub use dvdv::{DvdvDirectory, DvdvEntry, FileDvdv};
 pub use error::{BridgeErrorKind, Error};
 pub use native::NativeClient;
 pub use protocol::{FetchedContent, FetchedMessage, ProcessCard, Receipt, VersionInfo};
-pub use xta::{read_all_stdin, sniff_root_element, Xta};
+pub use xta::{Xta, read_all_stdin, sniff_root_element};
 
 /// Re-exported for consumers that want to serialize receipts themselves.
 pub use serde_json;

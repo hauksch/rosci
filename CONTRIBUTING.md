@@ -7,13 +7,13 @@ gates, keep the tests honest.
 ## Getting started
 
 Requirements: `docker` or `podman`, `make`, `git`. Nothing else touches
-your host — the host stays Java-free by design.
+your host by design.
 
 ```sh
 make setup    # build the pinned builder image
-make build    # Java bridge + mock jars, Rust workspace
+make build    # Rust workspace
 make test     # the full local suite
-make check    # lint + test + audit + verify-deps — run before submitting
+make check    # lint + test + audit — run before submitting
 ```
 
 Everything runs inside the pinned builder container
@@ -25,8 +25,6 @@ the identical commands via GitHub Actions.
 
 - **Rust:** `cargo fmt` clean, `cargo clippy --all-targets -D warnings`
   clean. The library (`crates/osci`) denies `missing_docs`.
-- **Java:** compiled with `-Xlint:all` and `-Werror` — warnings fail the
-  build.
 - **PINs and key material** are held in `Zeroizing`/zeroized on drop
   where the language allows, and never committed. The interop fixtures
   in `crates/osci-cli/tests/fixtures/interop/` are Governikus' *public*

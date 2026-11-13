@@ -1,6 +1,9 @@
 # rosci
 
 [![ci](https://github.com/hauksch/rosci/actions/workflows/ci.yml/badge.svg)](https://github.com/hauksch/rosci/actions/workflows/ci.yml)
+[![audit](https://github.com/hauksch/rosci/actions/workflows/audit.yml/badge.svg)](https://github.com/hauksch/rosci/actions/workflows/audit.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![deps: cargo-deny](https://img.shields.io/badge/dependencies-cargo--deny%20%2B%20SBOM-success.svg)](deny.toml)
 
 > **`rosci` — the curl of OSCI.** Send an arbitrary XTA message to any OSCI
 > recipient, resolved by recipient certificate or via DVDV, without first
@@ -192,6 +195,25 @@ endpoints mirror the CLI 1:1 (`/v1/send`, `/v1/fetch`, `/v1/messages/
 {id}/status`, `/v1/version`). Contract and runbook:
 [docs/REST-API.md](docs/REST-API.md), machine-readable:
 [docs/openapi.yaml](docs/openapi.yaml).
+
+## Security & supply chain
+
+`cargo deny` fails the build on vulnerable or yanked dependencies,
+license violations and unknown crate registries; the audit workflow
+attaches a CycloneDX SBOM as an artifact and runs weekly so new RustSec
+advisories surface without commit activity. Dependency updates arrive
+as Dependabot pull requests only — nothing is auto-merged. Found
+something sensitive? Please use GitHub's *private* vulnerability
+reporting instead of opening a public issue
+([SECURITY.md](SECURITY.md)).
+
+## Ecosystem
+
+- [oscirs](https://github.com/hauksch/oscirs) — the native OSCI 1.2
+  stack rosci is built on (dialogs, signing, encryption, EFFI).
+- [safedir](https://github.com/hauksch/safedir) — SAFE directory
+  resolution: the counterpart to rosci's DVDV extract. rosci moves the
+  message, safedir decides *where and to whom*.
 
 ## Contributing
 

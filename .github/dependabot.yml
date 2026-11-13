@@ -1,29 +1,23 @@
 version: 2
 updates:
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    groups:
+      cargo-deps:
+        patterns: ["*"]
   - package-ecosystem: cargo
     directory: /fuzz
     schedule:
       interval: weekly
-  - package-ecosystem: maven
-    directory: /java/osci-bridge
-    ignore:
-      # maven-shade-plugin 3.6.2 is compiled against plexus-utils 3.x and
-      # needs org/codehaus/plexus/util/xml/XmlStreamWriter, which 4.x
-      # removed — the shaded build fails (verified 2026-10-06, PR #7).
-      # Revisit when the shade/jar plugins are bumped past it.
-      - dependency-name: org.codehaus.plexus:plexus-utils
-        versions: [">=4.0.0"]
+    groups:
+      fuzz-deps:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
       interval: weekly
-  - package-ecosystem: maven
-    directory: /java/osci-mock
-    schedule:
-      interval: weekly
+    groups:
+      action-deps:
+        patterns: ["*"]
