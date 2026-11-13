@@ -27,7 +27,7 @@ base64 = { workspace = true }
 # PKCS#12 keystore parsing (the bridge identity format). Legacy OSCI
 # keystores use PBES1 3DES/RC2, so the legacy cipher features stay on.
 p12-keystore = "0.4"
-rand = "0.8"
+rand = "0.10"
 rsa = { version = "0.9.10", features = ["sha2"] }
 tracing = { workspace = true }
 zeroize = { workspace = true, features = ["serde"] }
