@@ -16,10 +16,10 @@ path = "src/lib.rs"
 [dependencies]
 # OSCI-Rust-Rewrite stack (dialogs, message compose/parse, crypto, transport).
 # Pinned by rev until oscirs starts tagging; bump via `cargo update -p osci_rs`.
-osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "1c7484851e357820674fe50826a15ddfe378f3df" }
-osci_crypto = { package = "osci-crypto", git = "https://github.com/hauksch/oscirs", rev = "1c7484851e357820674fe50826a15ddfe378f3df" }
-osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "1c7484851e357820674fe50826a15ddfe378f3df" }
-osci_transport = { package = "osci-transport", git = "https://github.com/hauksch/oscirs", rev = "1c7484851e357820674fe50826a15ddfe378f3df" }
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
+osci_crypto = { package = "osci-crypto", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
+osci_transport = { package = "osci-transport", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -43,5 +43,5 @@ expect_used = "warn"
 tempfile = "3"
 proptest = { workspace = true }
 # Integration tests drive the oscirs types directly (scripted mock).
-osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "1c7484851e357820674fe50826a15ddfe378f3df" }
-osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "1c7484851e357820674fe50826a15ddfe378f3df" }
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
