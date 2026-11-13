@@ -77,9 +77,7 @@ pub enum Error {
     BridgeProtocol(String),
 
     /// The bridge did not answer within the configured timeout.
-    #[error(
-        "bridge timed out after {timeout_ms} ms — the intermediary is probably still stamping"
-    )]
+    #[error("bridge timed out after {timeout_ms} ms — the intermediary is probably still stamping")]
     BridgeTimeout {
         /// How long we waited, in milliseconds.
         timeout_ms: u64,

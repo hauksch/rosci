@@ -45,10 +45,10 @@ fn free_port() -> u16 {
     // Bind-then-drop races by nature; three attempts make the race
     // practically unwinnable instead of merely rude.
     for _ in 0..3 {
-        if let Ok(listener) = TcpListener::bind("127.0.0.1:0") {
-            if let Ok(addr) = listener.local_addr() {
-                return addr.port();
-            }
+        if let Ok(listener) = TcpListener::bind("127.0.0.1:0")
+            && let Ok(addr) = listener.local_addr()
+        {
+            return addr.port();
         }
     }
     panic!("no ephemeral port granted in three attempts")

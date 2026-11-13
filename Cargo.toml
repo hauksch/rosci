@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["crates/osci", "crates/osci-cli", "crates/roscid", "crates/testsupport"]
 # `.oscirs-work` hosts a nested cargo workspace (the oscirs iteration
 # worktree); without excluding it, cargo resolves the patched crates'
@@ -11,7 +11,7 @@ exclude = ["fuzz", ".oscirs-work"]
 # Matches CHANGELOG.md's released line and docs/openapi.yaml — the
 # binaries self-report this via clap's `version`.
 version = "0.5.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 publish = false # crates.io publication is a separate, later decision
 repository = "https://github.com/hauksch/rosci"

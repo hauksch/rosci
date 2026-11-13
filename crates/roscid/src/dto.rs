@@ -110,61 +110,77 @@ mod tests {
 
     #[test]
     fn to_spec_requires_exactly_one_addressing_form() {
-        assert!(ToSpec {
-            cert: Some("c".into()),
-            org: None,
-            category: None
-        }
-        .validate()
-        .is_ok());
-        assert!(ToSpec {
-            cert: None,
-            org: Some("0241".into()),
-            category: None
-        }
-        .validate()
-        .is_ok());
-        assert!(ToSpec {
-            cert: Some("c".into()),
-            org: Some("0241".into()),
-            category: None
-        }
-        .validate()
-        .is_err());
-        assert!(ToSpec {
-            cert: None,
-            org: None,
-            category: None
-        }
-        .validate()
-        .is_err());
+        assert!(
+            ToSpec {
+                cert: Some("c".into()),
+                org: None,
+                category: None
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            ToSpec {
+                cert: None,
+                org: Some("0241".into()),
+                category: None
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            ToSpec {
+                cert: Some("c".into()),
+                org: Some("0241".into()),
+                category: None
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            ToSpec {
+                cert: None,
+                org: None,
+                category: None
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]
     fn fetch_body_requires_exactly_one_selection() {
-        assert!(FetchBody {
-            message_id: Some("m".into()),
-            all: false
-        }
-        .validate()
-        .is_ok());
-        assert!(FetchBody {
-            message_id: None,
-            all: true
-        }
-        .validate()
-        .is_ok());
-        assert!(FetchBody {
-            message_id: Some("m".into()),
-            all: true
-        }
-        .validate()
-        .is_err());
-        assert!(FetchBody {
-            message_id: None,
-            all: false
-        }
-        .validate()
-        .is_err());
+        assert!(
+            FetchBody {
+                message_id: Some("m".into()),
+                all: false
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            FetchBody {
+                message_id: None,
+                all: true
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            FetchBody {
+                message_id: Some("m".into()),
+                all: true
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            FetchBody {
+                message_id: None,
+                all: false
+            }
+            .validate()
+            .is_err()
+        );
     }
 }

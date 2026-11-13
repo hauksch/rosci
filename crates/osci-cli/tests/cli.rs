@@ -12,13 +12,13 @@ use std::net::TcpListener;
 use assert_cmd::Command;
 use osci_core::helper::base64;
 use osci_core::message::compose::{
-    compose_message, OutContent, OutContentContainer, OutFeedback, OutMessage, OutProcessCard,
-    OutProcessCardBundle,
+    OutContent, OutContentContainer, OutFeedback, OutMessage, OutProcessCard, OutProcessCardBundle,
+    compose_message,
 };
-use osci_core::soap::{find_header, ControlBlock};
+use osci_core::soap::{ControlBlock, find_header};
 use osci_core::xml::parser;
-use osci_rs::security::{encrypt_container, EncryptConfig};
 use osci_rs::Certificate;
+use osci_rs::security::{EncryptConfig, encrypt_container};
 use osci_rs::{MessageType, StoredMessage};
 use predicates::prelude::*;
 use predicates::str as predicate_str;
@@ -114,10 +114,10 @@ fn serve(listener: TcpListener, intermediary_decrypter: (Vec<u8>, String), clien
                     break;
                 }
                 request.extend_from_slice(&buf[..n]);
-                if let Some(len) = content_length(&request) {
-                    if request.len() >= len {
-                        break;
-                    }
+                if let Some(len) = content_length(&request)
+                    && request.len() >= len
+                {
+                    break;
                 }
             }
             let body = body_of(&request).to_vec();

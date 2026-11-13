@@ -9,18 +9,18 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 
+use osci::Xta;
 use osci::native::NativeClient;
 use osci::p12::{P12Decrypter, P12Keypair};
-use osci::Xta;
 use osci::{Identity, Intermediary};
 
 use osci_core::helper::base64;
-use osci_core::message::compose::{compose_message, OutFeedback, OutMessage};
 use osci_core::message::MessageType;
-use osci_core::soap::{find_header, ControlBlock};
+use osci_core::message::compose::{OutFeedback, OutMessage, compose_message};
+use osci_core::soap::{ControlBlock, find_header};
 use osci_core::xml::parser;
-use osci_rs::security::{decrypt_transport_message, EncryptConfig};
 use osci_rs::StoredMessage;
+use osci_rs::security::{EncryptConfig, decrypt_transport_message};
 
 const PIN: &str = "testpin";
 
@@ -99,10 +99,10 @@ fn serve(
                     break;
                 }
                 request.extend_from_slice(&buf[..n]);
-                if let Some(len) = content_length(&request) {
-                    if request.len() >= len {
-                        break;
-                    }
+                if let Some(len) = content_length(&request)
+                    && request.len() >= len
+                {
+                    break;
                 }
             }
             let body = body_of(&request).to_vec();
