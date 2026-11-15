@@ -92,7 +92,9 @@ fn decrypter_round_trips_pkcs1v15_and_oaep() {
     let public = decrypter.certificate().rsa_public_key().unwrap();
 
     let secret: Vec<u8> = (0u8..32).collect();
-    let mut rng = rand::thread_rng();
+    // rsa 0.9's encrypt takes a rand_core 0.6 CryptoRng — OsRng from that
+    // trait level (unified with rsa's own rand_core), not rand 0.10's.
+    let mut rng = rand_core::OsRng;
 
     // RSAES-PKCS1-v1_5
     let sealed = public
