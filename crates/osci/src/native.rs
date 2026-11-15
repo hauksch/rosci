@@ -1482,9 +1482,9 @@ pub(crate) fn certificate_der(input: &str) -> Option<Vec<u8>> {
 /// base64's `+ / =` upset strict parsers there (the reference library
 /// also keeps its `MIME_boundary_` prefix alphanumeric).
 fn fresh_boundary() -> String {
-    use rand::RngCore as _;
+    use rand::Rng as _;
     let mut bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     format!("MIME_boundary_rosci_{hex}")
 }

@@ -41,6 +41,8 @@ expect_used = "warn"
 
 [dev-dependencies]
 tempfile = "3"
+# rsa 0.9 speaks rand_core 0.6; its OsRng backs test encryption padding.
+rand_core = { version = "0.6", features = ["getrandom"] }
 proptest = { workspace = true }
 # Integration tests drive the oscirs types directly (scripted mock).
 osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
