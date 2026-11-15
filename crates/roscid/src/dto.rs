@@ -74,6 +74,12 @@ pub struct SendBody {
     pub subject: Option<String>,
     #[serde(default)]
     pub chunk_size_kb: Option<u64>,
+    /// XTA MessageMetaData author identifier (e.g. `ags:NNNNNNNNNNN`).
+    #[serde(default)]
+    pub metadata_author: Option<String>,
+    /// XTA MessageMetaData reader identifier.
+    #[serde(default)]
+    pub metadata_reader: Option<String>,
     #[serde(default = "default_true")]
     pub sign: bool,
     #[serde(default = "default_true")]

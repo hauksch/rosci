@@ -1,0 +1,39 @@
+# roscid systemd unit — install as /etc/systemd/system/roscid.service
+# after `cargo build --release` and copying target/release/roscid into
+# place. Pairs with deployment/roscid.env.example at
+# /etc/roscid/roscid.env.
+
+[Unit]
+Description=roscid — REST server over OSCI
+Documentation=file:///opt/rosci/docs/OPERATIONS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=roscid
+Group=roscid
+EnvironmentFile=/etc/roscid/roscid.env
+ExecStart=/usr/local/bin/roscid
+Restart=on-failure
+RestartSec=5
+
+# The identity keystores and the PIN file are the crown jewels: the
+# process reads them once and needs no write access anywhere it runs.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

@@ -163,6 +163,12 @@ components:
         chunk_size_kb:
           type: integer
           description: EFFI chunked transfer, KB per chunk
+        metadata_author:
+          type: string
+          description: XTA MessageMetaData author identifier (e.g. ags:NNNNNNNNNNN)
+        metadata_reader:
+          type: string
+          description: XTA MessageMetaData reader identifier
         sign:
           type: boolean
           default: true

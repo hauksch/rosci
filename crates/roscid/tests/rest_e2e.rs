@@ -241,6 +241,8 @@ fn rest_send_status_fetch_round_trip() {
         "subject": "rest e2e sendung",
         "content": {"filename": "meldung.xta", "data": b64(b"rest round trip payload 2026")},
         "attachments": [{"filename": "anhang.txt", "data": b64(b"attachment bytes 123")}],
+        "metadata_author": "ags:010530088888",
+        "metadata_reader": "read:0241100012345",
     });
     let (status, response) = http(
         "POST",
@@ -256,6 +258,34 @@ fn rest_send_status_fetch_round_trip() {
         .filter(|id| !id.is_empty())
         .expect("intermediary must assign a message id")
         .to_string();
+
+    // --- the REST-supplied MessageMetaData must have crossed the wire -----
+    // The same proof the CLI e2e pins shut: the mock captured the
+    // storeDelivery exchange, and the REST body's author/reader identifiers
+    // must appear verbatim in the custom SOAP header.
+    let store_dump = std::fs::read_dir(dir.join("dump"))
+        .expect("dump dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            std::fs::read(p)
+                .map(|c| String::from_utf8_lossy(&c).contains("storeDelivery"))
+                .unwrap_or(false)
+        })
+        .expect("store delivery dump");
+    let store_envelope = String::from_utf8_lossy(&std::fs::read(&store_dump).unwrap()).into_owned();
+    assert!(
+        store_envelope.contains("MessageMetaData"),
+        "XTA MessageMetaData header must ride along: {store_dump:?}"
+    );
+    assert!(
+        store_envelope.contains("ags:010530088888"),
+        "the author identifier must reach the wire: {store_dump:?}"
+    );
+    assert!(
+        store_envelope.contains("read:0241100012345"),
+        "the reader identifier must reach the wire: {store_dump:?}"
+    );
 
     // --- status: the mock's canned Laufzettel for OUR message id ---------
     // A route that merely answers 200/404/422 would also pass if the

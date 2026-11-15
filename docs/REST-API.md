@@ -49,6 +49,8 @@ Request (all fields mirror the CLI's send flags):
   "content": {"filename": "meldung.xta", "data": "<base64>"},
   "attachments": [{"filename": "anhang.txt", "data": "<base64>"}],
   "chunk_size_kb": 1024,
+  "metadata_author": "ags:010530088888",
+  "metadata_reader": "read:0241100012345",
   "sign": true,
   "encrypt": true
 }
@@ -59,6 +61,10 @@ Request (all fields mirror the CLI's send flags):
   until the server can resolve it through its own configured
   intermediary.
 - `chunk_size_kb` opts into EFFI chunked transfer.
+- `metadata_author` / `metadata_reader` ride as the XTA MessageMetaData
+  header (Ergänzung; identifier strings, e.g. `ags:NNNNNNNNNNN`). Both
+  optional; sent only when at least one is set — the same CLI flags by
+  the same names.
 - Response 200: the `Receipt` — `{"message_id", "response_signed",
   "feedback"?}`. `response_signed: true` is the whole verification chain
   in one boolean.

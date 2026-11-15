@@ -296,6 +296,12 @@ fn send_op(client: &mut OsciClient, send: SendBody) -> Result<crate::dto::SendOk
     if let Some(subject) = &send.subject {
         send_builder = send_builder.subject(subject.clone());
     }
+    if let Some(author) = &send.metadata_author {
+        send_builder = send_builder.metadata_author(author.clone());
+    }
+    if let Some(reader) = &send.metadata_reader {
+        send_builder = send_builder.metadata_reader(reader.clone());
+    }
     if let Some(kb) = send.chunk_size_kb {
         send_builder = send_builder.chunk_size_kb(kb);
     }
