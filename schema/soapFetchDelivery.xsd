@@ -45,7 +45,8 @@
 						<xsd:element ref="osci:fetchDelivery" />
 						<xsd:element ref="osci:NonIntermediaryCertificates"
 							minOccurs="0" />
-						<xsd:any namespace="##other" processContents="lax"
+						<xsd:any namespace="http://www.osci.eu/ws/2014/10/transport"
+						processContents="lax"
 							minOccurs="0" maxOccurs="unbounded" />
 					</xsd:sequence>
 				</xsd:restriction>
