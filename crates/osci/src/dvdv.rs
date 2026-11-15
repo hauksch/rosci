@@ -5,9 +5,9 @@
 //! speaks OAuth against the FITKO REST API — which needs registered
 //! client credentials, and this project leaves no online traces by
 //! design. So the trait below is the seam: `FileDvdv` resolves entries
-//! from a local JSON extract today; a future `BridgeDvdv` (via the
-//! FITKO dvdv-bibliothek-java already wrapped in our bridge jar) can be
-//! dropped in without touching the CLI.
+//! from a local JSON extract today; a future online implementation (via
+//! FITKO's dvdv-bibliothek-java) can be dropped in without touching the
+//! CLI.
 
 use std::path::{Path, PathBuf};
 

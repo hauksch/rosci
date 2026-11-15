@@ -34,7 +34,7 @@ pub struct ServerConfig {
     #[allow(dead_code)]
     pub dvdv_file: PathBuf,
     /// Per-operation bridge timeout. Services should bound this: a wedged
-    /// JVM must surface as HTTP 504, not as a connection held open.
+    /// intermediary must surface as HTTP 504, not as a connection held open.
     pub response_timeout: Duration,
     /// Test mode: plain SOAP transport (loopback intermediaries only —
     /// the same guard the CLI applies).

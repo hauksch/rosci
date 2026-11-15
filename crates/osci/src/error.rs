@@ -68,11 +68,11 @@ pub enum Error {
     #[error("configuration error: {0}")]
     Config(String),
 
-    /// The bridge process could not be spawned (no java? jar missing?).
+    /// The transport stack could not be started.
     #[error("cannot start bridge process: {0}")]
     BridgeSpawn(String),
 
-    /// The bridge died or produced output that violates the line protocol.
+    /// The stack died or produced output that violates the wire contract.
     #[error("bridge protocol violation: {0}")]
     BridgeProtocol(String),
 

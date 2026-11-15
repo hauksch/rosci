@@ -72,9 +72,7 @@ pub fn build_app(cfg: &ServerConfig) -> Result<Arc<App>, String> {
 }
 
 /// Blocks for the lifetime of the process: worker threads serve requests,
-/// the main thread waits for SIGTERM/SIGINT and shuts the bridge down
-/// politely. A daemon that orphans its JVM child is a finding waiting to
-/// be filed.
+/// the main thread waits for SIGTERM/SIGINT and exits politely.
 pub fn serve(app: Arc<App>) -> ! {
     const WORKERS: usize = 4;
     let mut handles = Vec::new();
@@ -233,7 +231,7 @@ fn handle(app: &App, mut request: tiny_http::Request) {
 /// Runs an operation against the warm client and maps library errors onto
 /// the HTTP error envelope. Single flight by design: the intermediary
 /// serializes operations, so concurrent HTTP requests queue here instead
-/// of racing a JVM.
+/// of racing a wedged dialog.
 fn run_req<T, F>(
     what: String,
     supervisor: &Mutex<Supervisor>,
