@@ -24,12 +24,6 @@ ignore = [
     # (Documented identically in the sibling repos.)
     "RUSTSEC-2026-0543",
     "RUSTSEC-2023-0071",
-    # RUSTSEC-2026-0387 (crypto-bigint timing variability): the fix is a
-    # semver bump to 0.7.x that elliptic-curve 0.13 (p256 ECDSA in the
-    # oscirs crypto stack) cannot take yet — upstream-blocked. Exposure is
-    # on the ECDSA *verify* path only (partner signatures); our private-key
-    # operations are RSA. Revisit when oscirs moves to p256 0.14.
-    "RUSTSEC-2026-0387",
 ]
 
 [licenses]

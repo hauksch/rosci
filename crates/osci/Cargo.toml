@@ -16,10 +16,10 @@ path = "src/lib.rs"
 [dependencies]
 # OSCI-Rust-Rewrite stack (dialogs, message compose/parse, crypto, transport).
 # Pinned by rev until oscirs starts tagging; bump via `cargo update -p osci_rs`.
-osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
-osci_crypto = { package = "osci-crypto", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
-osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
-osci_transport = { package = "osci-transport", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "87ab0ce556ad867dfc28d8258a7d361f264c815f" }
+osci_crypto = { package = "osci-crypto", git = "https://github.com/hauksch/oscirs", rev = "87ab0ce556ad867dfc28d8258a7d361f264c815f" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "87ab0ce556ad867dfc28d8258a7d361f264c815f" }
+osci_transport = { package = "osci-transport", git = "https://github.com/hauksch/oscirs", rev = "87ab0ce556ad867dfc28d8258a7d361f264c815f" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -45,5 +45,5 @@ tempfile = "3"
 rand_core = { version = "0.6", features = ["getrandom"] }
 proptest = { workspace = true }
 # Integration tests drive the oscirs types directly (scripted mock).
-osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
-osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "ea32ae3eb343f3fc87595604bfa0fe90f1eefa35" }
+osci_rs = { package = "osci", git = "https://github.com/hauksch/oscirs", rev = "87ab0ce556ad867dfc28d8258a7d361f264c815f" }
+osci_core = { package = "osci-core", git = "https://github.com/hauksch/oscirs", rev = "87ab0ce556ad867dfc28d8258a7d361f264c815f" }
