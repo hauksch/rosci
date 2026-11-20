@@ -17,6 +17,12 @@ yanked = "deny"
 # (RSAES-PKCS1-v1_5 key unwrap of partner-chosen ciphertexts). Revisit when
 # RustCrypto/RSA#626 lands; see SECURITY.md.
 ignore = [
+    # RUSTSEC-2026-0543 (chrono unmaintained): timestamps only — dialog
+    # stamps and XSD dateTime fields surfaced through oscirs API types
+    # (OutProcessCard etc.). Migration is blocked on oscirs moving its
+    # API off chrono (jiff/time); no safe in-place upgrade exists.
+    # (Documented identically in the sibling repos.)
+    "RUSTSEC-2026-0543",
     "RUSTSEC-2023-0071",
     # RUSTSEC-2026-0387 (crypto-bigint timing variability): the fix is a
     # semver bump to 0.7.x that elliptic-curve 0.13 (p256 ECDSA in the
