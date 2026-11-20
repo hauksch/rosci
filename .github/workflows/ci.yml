@@ -31,7 +31,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - name: cargo deny (licenses, advisories, sources)
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
+        uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21
         with:
           tool: cargo-deny
       - run: cargo deny --config deny.toml check --hide-inclusion-graph licenses advisories sources
