@@ -33,8 +33,7 @@ impl Intermediary {
 /// never met a certificate it couldn't split into two more.
 ///
 /// PINs are held in `Zeroizing` so every copy this crate makes is scrubbed
-/// on drop. What stays unscrubbable, honestly: the serialized JSON request
-/// line on the pipe and the JVM-side strings past it (docs/AUDIT.md).
+/// on drop — the crates here keep their own house in order.
 #[derive(Clone, Default)]
 pub struct Identity {
     signer_p12_b64: String,
@@ -173,9 +172,9 @@ impl Tls {
         Ok(self)
     }
 
-    /// Sets a TLS client-authentication bundle from a PKCS#12 file. The
-    /// bridge base64-decodes it into a KeyStore and presents it via a
-    /// KeyManagerFactory; parsing (and PIN errors) happen JVM-side.
+    /// Sets a TLS client-authentication bundle from a PKCS#12 file.
+    /// Parsing (and PIN errors) happen in-process via `P12Keypair`; a
+    /// wrong PIN surfaces as a config error at build time.
     pub fn with_client_p12_file(
         mut self,
         path: &std::path::Path,

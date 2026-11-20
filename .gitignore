@@ -1,8 +1,6 @@
 # Build outputs
 /dist/
 target/
-java/**/target/
-java/**/dependency-reduced-pom.xml
 **/*.rs.bk
 *.log
 
@@ -10,6 +8,7 @@ java/**/dependency-reduced-pom.xml
 # but none of it belongs in git.
 /.cargo-home/
 /.m2-repo/
+/.m2-tmp/
 /.deps/
 /.rustup/
 /.cache/

@@ -1,8 +1,9 @@
 //! `rosci` — the curl of OSCI.
 //!
 //! Sends an arbitrary XTA message through OSCI-Transport 1.2 with one
-//! command and zero ceremony. The heavy lifting happens in the Java
-//! sidecar (see `java/osci-bridge`); this binary is the friendly face.
+//! command and zero ceremony. The heavy lifting happens in the native
+//! oscirs stack (`osci` + `osci-transport`); this binary is the friendly
+//! face.
 
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -25,7 +26,7 @@ Exit codes: 0 ok · 2 usage/config · 3 DVDV miss · 4 transport/OSCI ·
     version,
     about = ABOUT,
     disable_help_subcommand = true,
-    after_help = "Environment: OSCI_JAVA_OPTS passes extra JVM flags to the bridge\n(e.g. -Dorg.slf4j.simpleLogger.defaultLogLevel=debug). See README.md\nfor the full OSCI_* list."
+    after_help = "Environment: see README.md for the full OSCI_* list."
 )]
 struct Cli {
     /// verbosity: none = warnings, -v = info, -vv = debug, -vvv = trace
@@ -86,7 +87,7 @@ struct ConnArgs {
     tls_ca: Option<PathBuf>,
 
     /// TLS client-authentication bundle (PKCS#12) for mutual TLS with the
-    /// intermediary. Parsed JVM-side; a wrong PIN surfaces as a transport
+    /// intermediary. Parsed at client build; a wrong PIN surfaces as a config
     /// error from the bridge.
     #[arg(long, env = "OSCI_TLS_CLIENT_CERT")]
     tls_client_cert: Option<PathBuf>,
@@ -298,10 +299,8 @@ fn check_insecure_guard(conn: &ConnArgs, url: &str) -> Result<(), Error> {
     )))
 }
 
-/// The PIN is wrapped in Zeroizing so every Rust-side copy is scrubbed on
-/// drop. What cannot be scrubbed: the JVM-side string residency inside the
-/// bridge (documented in docs/AUDIT.md) — the Rust side of the pipe can at
-/// least keep its own house in order.
+/// The PIN is wrapped in Zeroizing so every copy this crate makes is
+/// scrubbed on drop — the Rust side keeps its own house in order.
 fn load_pin(conn: &ConnArgs) -> Result<zeroize::Zeroizing<String>, Error> {
     if let Some(pin) = &conn.pin {
         return Ok(zeroize::Zeroizing::new(pin.clone()));

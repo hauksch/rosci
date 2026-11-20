@@ -1,10 +1,9 @@
 //! `osci` — the library behind `rosci`, the curl of OSCI.
 //!
-//! A small, boring, well-lit API around the Governikus OSCI-Transport-1.2
-//! Java library (`de.osci:osci-bibliothek-lib`). The Java side runs as a
-//! sidecar process ("the bridge") speaking a one-line-JSON protocol over
-//! stdio; this crate spawns it, drives it, and maps its errors into types
-//! that don't require a correspondence course in SOAP fault codes.
+//! A small, boring, well-lit API around OSCI-Transport 1.2, implemented
+//! on the native oscirs stack (pinned by git rev): this crate composes
+//! the dialogs, drives the wire, and maps its errors into types that
+//! don't require a correspondence course in SOAP fault codes.
 //!
 //! (Test builds may unwrap and expect freely — panicking on a broken
 //! assumption is precisely what a test is for.)
